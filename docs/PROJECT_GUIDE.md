@@ -918,12 +918,12 @@ redaction profile + consent scope + retention class
 | Gate | 目标 | 当前状态 | 仍缺什么 |
 |---|---|---|---|
 | Gate 1 | 官方证据、格式边界、决策基线 | 已完成基线 | 持续做版本漂移复核 |
-| Gate 2 | 只读 inventory 与路径安全 | 核心切片完成，发布验证部分完成 | Windows reparse/junction、确定性并发替换、真实三平台 CI |
+| Gate 2 | 只读 inventory 与路径安全 | 核心切片完成，Linux/macOS/Windows CI 已通过 | Windows reparse/junction、确定性并发替换 fixture |
 | Gate 3 | Codex/Claude 项目语义读取与 IR | 实验性纵向切片完成 | 用户/managed 层、完整配置合并、外部批准、lossless parser/native validation；整体 adapter 仍为 Inventory |
 | Gate 4 | 双向转换预览 | canonical Codex root wrapper 纵向切片已验证；能力冻结 | 只有核心闭环验证后才复审通用/反向 renderer |
 | Gate 5 | ChangeSet、快照、事务与恢复 | 未开始 | journal、vault、stale-hash、故障注入、byte-identical rollback |
 | Gate 6 | 真实工作区 Apply | 未开始 | Gate 2/4/5 全通过、明确批准与 post-validate |
-| Gate 7 | UI、Wave 1、GitHub/分发 | 未开始 | Vue 工作流、其他宿主语义、PR 导出、签名/SBOM |
+| Gate 7 | UI、Wave 1、GitHub/分发 | GitHub 发布基线完成，其余未开始 | Vue 工作流、其他宿主语义、PR 导出、安装包、签名/SBOM |
 
 ## 18. MVP 发布门槛
 

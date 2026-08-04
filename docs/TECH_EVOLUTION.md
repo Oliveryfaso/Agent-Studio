@@ -289,3 +289,4 @@
 - 产品选择桌面优先、本地 Web UI：Vue 3 负责交互，Java 21 负责文件、策略和回退；第一实现使用 loopback-only HTTP，发布时优先通过 `jpackage` 携带运行时。
 - 纯在线网页不进入主路线，因为它不能独立满足本地目录授权、原子写入、备份回退和默认离线要求。
 - GitHub 正式仓库确定为 `Oliveryfaso/Agent-Studio`；发布前忽略 build、AppleDouble、IDE、编译器参数、日志和本地 workbench 状态，并执行敏感文件名、凭据模式和大文件审计。
+- 首次真实 CI 暴露 macOS Java toolchain 环境变量差异和 Windows Git Bash 绝对路径 argfile 不兼容；改用固定提交的 `actions/setup-java`，并让 javac source argfile 使用仓库相对路径后，Linux、macOS、Windows 三个平台全部通过。
