@@ -15,11 +15,15 @@ if [[ -d "$task_build_dir" ]]; then
 fi
 mkdir -p -- "$task_build_dir"
 
-source_list="$repo_root/build/core-test/sources.txt"
-find "$repo_root/core/src/main/java" "$repo_root/core/src/test/java" \
+cd -- "$repo_root"
+
+# Keep javac argfile entries relative. Native javac on Windows does not translate
+# the MSYS-style absolute paths that Git Bash would otherwise write into the file.
+source_list="build/core-test/sources.txt"
+find "core/src/main/java" "core/src/test/java" \
   -name '*.java' ! -name '._*' -type f -print | LC_ALL=C sort > "$source_list"
 
-javac --release 21 -encoding UTF-8 -Xlint:all -Werror -d "$task_build_dir" "@$source_list"
+javac --release 21 -encoding UTF-8 -Xlint:all -Werror -d "build/core-test/classes" "@$source_list"
 test_mains=(
   dev.agentconfig.workbench.PhaseOneTests
   dev.agentconfig.workbench.ScanControlTests
@@ -44,5 +48,5 @@ test_mains=(
 )
 
 for test_main in "${test_mains[@]}"; do
-  java -cp "$task_build_dir" "$test_main"
+  java -cp "build/core-test/classes" "$test_main"
 done
