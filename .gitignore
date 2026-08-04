@@ -1,0 +1,29 @@
+# macOS metadata
+.DS_Store
+._*
+
+# IDE and local compiler metadata
+.idea/
+.vscode/
+*.iml
+*.class
+*.args
+*.log
+
+# Local secrets and overrides
+.env
+.env.*
+!.env.example
+CLAUDE.local.md
+.claude/settings.local.json
+
+# Build outputs (once implementation begins)
+dist/
+build/
+out/
+target/
+.gradle/
+node_modules/
+
+# Local workbench state must never be committed
+.agent-config-workbench/

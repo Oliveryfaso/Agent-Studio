@@ -1,0 +1,12 @@
+package dev.agentconfig.workbench.conversion;
+
+public enum TargetConflictState {
+    NOT_EVALUATED,
+    NO_EXISTING_TARGET,
+    EXISTING_TARGET_PRESENT,
+    EXISTING_TARGET_IDENTICAL,
+    EXISTING_TARGET_CONFLICT,
+    INVALID_TARGET,
+    OUTSIDE_SCOPE,
+    TARGET_CHANGED_DURING_PROBE
+}
