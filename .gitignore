@@ -20,6 +20,7 @@ CLAUDE.local.md
 # Build outputs (once implementation begins)
 dist/
 build/
+.playwright-cli/
 out/
 target/
 .gradle/

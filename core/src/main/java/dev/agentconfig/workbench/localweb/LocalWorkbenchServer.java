@@ -5,6 +5,7 @@ import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.URI;
@@ -14,10 +15,10 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
-import java.io.OutputStream;
 import java.security.SecureRandom;
 import java.util.HexFormat;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -30,17 +31,29 @@ public final class LocalWorkbenchServer implements AutoCloseable {
     private final SkillChangeHttpApi api;
     private final String token;
     private final String origin;
+    private final Optional<Path> uiRoot;
 
     private LocalWorkbenchServer(HttpServer server, ExecutorService executor,
-            SkillChangeHttpApi api, String token) {
+            SkillChangeHttpApi api, String token, Optional<Path> uiRoot) {
         this.server = server;
         this.executor = executor;
         this.api = api;
         this.token = token;
         this.origin = "http://127.0.0.1:" + server.getAddress().getPort();
+        this.uiRoot = uiRoot;
     }
 
     public static LocalWorkbenchServer start(Path suppliedStateRoot) throws IOException {
+        return start(suppliedStateRoot, Optional.empty());
+    }
+
+    public static LocalWorkbenchServer start(Path suppliedStateRoot, Path suppliedUiRoot)
+            throws IOException {
+        return start(suppliedStateRoot, Optional.of(suppliedUiRoot));
+    }
+
+    private static LocalWorkbenchServer start(Path suppliedStateRoot,
+            Optional<Path> suppliedUiRoot) throws IOException {
         Path stateRoot = suppliedStateRoot.toAbsolutePath().normalize();
         if (Files.isSymbolicLink(stateRoot)) throw new IOException("state root link");
         stateRoot = stateRoot.toRealPath();
@@ -52,8 +65,20 @@ public final class LocalWorkbenchServer implements AutoCloseable {
         ExecutorService executor = Executors.newFixedThreadPool(4);
         byte[] tokenBytes = new byte[32];
         new SecureRandom().nextBytes(tokenBytes);
+        Optional<Path> uiRoot = suppliedUiRoot.map(Path::toAbsolutePath).map(Path::normalize);
+        if (uiRoot.isPresent()) {
+            Path candidate = uiRoot.orElseThrow();
+            if (Files.isSymbolicLink(candidate)) throw new IOException("ui root link");
+            candidate = candidate.toRealPath();
+            if (!Files.isDirectory(candidate, LinkOption.NOFOLLOW_LINKS)
+                    || !Files.isRegularFile(candidate.resolve("index.html"),
+                            LinkOption.NOFOLLOW_LINKS)) {
+                throw new IOException("ui root invalid");
+            }
+            uiRoot = Optional.of(candidate);
+        }
         LocalWorkbenchServer workbench = new LocalWorkbenchServer(server, executor,
-                new SkillChangeHttpApi(stateRoot), HexFormat.of().formatHex(tokenBytes));
+                new SkillChangeHttpApi(stateRoot), HexFormat.of().formatHex(tokenBytes), uiRoot);
         server.createContext("/api/v1/runtime", workbench::runtime);
         server.createContext("/api/v1/skill-changes/preview",
                 workbench.post(workbench.api::preview));
@@ -61,7 +86,7 @@ public final class LocalWorkbenchServer implements AutoCloseable {
                 workbench.post(workbench.api::apply));
         server.createContext("/api/v1/skill-changes/rollback",
                 workbench.post(workbench.api::rollback));
-        server.createContext("/", workbench::notFound);
+        server.createContext("/", workbench::staticOrNotFound);
         server.setExecutor(executor);
         server.start();
         return workbench;
@@ -73,6 +98,10 @@ public final class LocalWorkbenchServer implements AutoCloseable {
 
     public String sessionToken() {
         return token;
+    }
+
+    public URI launchUri() {
+        return URI.create(origin + "/#token=" + token);
     }
 
     private HttpHandler post(ApiCall call) {
@@ -153,8 +182,44 @@ public final class LocalWorkbenchServer implements AutoCloseable {
                 + " \"existingSkillReplace\": true}]\n}");
     }
 
-    private void notFound(HttpExchange exchange) throws IOException {
-        sendError(exchange, 404, "NOT_FOUND", false);
+    private void staticOrNotFound(HttpExchange exchange) throws IOException {
+        try {
+            if (!validHost(exchange)) {
+                sendError(exchange, 403, "HOST_FORBIDDEN", false);
+                return;
+            }
+            if (!"GET".equals(exchange.getRequestMethod())) {
+                sendError(exchange, 405, "METHOD_NOT_ALLOWED", false);
+                return;
+            }
+            if (uiRoot.isEmpty()) {
+                sendError(exchange, 404, "NOT_FOUND", false);
+                return;
+            }
+            String rawPath = exchange.getRequestURI().getRawPath();
+            if (rawPath == null || rawPath.contains("%") || rawPath.contains("\\")
+                    || rawPath.contains("..")) {
+                sendError(exchange, 404, "NOT_FOUND", false);
+                return;
+            }
+            String relative = "/".equals(rawPath) || "/index.html".equals(rawPath)
+                    ? "index.html" : rawPath.substring(1);
+            if (!relative.matches("(?:index\\.html|assets/[A-Za-z0-9._-]+|favicon\\.svg)")) {
+                sendError(exchange, 404, "NOT_FOUND", false);
+                return;
+            }
+            Path root = uiRoot.orElseThrow();
+            Path file = root.resolve(relative).normalize();
+            if (!file.startsWith(root) || Files.isSymbolicLink(file)
+                    || !Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)
+                    || !file.toRealPath().startsWith(root)) {
+                sendError(exchange, 404, "NOT_FOUND", false);
+                return;
+            }
+            sendStatic(exchange, file, "index.html".equals(relative));
+        } finally {
+            exchange.close();
+        }
     }
 
     private boolean validHost(HttpExchange exchange) {
@@ -194,6 +259,30 @@ public final class LocalWorkbenchServer implements AutoCloseable {
         exchange.getResponseHeaders().set("X-Content-Type-Options", "nosniff");
         exchange.getResponseHeaders().set("Content-Security-Policy", "default-src 'none'");
         exchange.sendResponseHeaders(status, bytes.length);
+        try (OutputStream output = exchange.getResponseBody()) {
+            output.write(bytes);
+        }
+    }
+
+    private static void sendStatic(HttpExchange exchange, Path file, boolean index)
+            throws IOException {
+        byte[] bytes = Files.readAllBytes(file);
+        String name = file.getFileName().toString().toLowerCase(java.util.Locale.ROOT);
+        String contentType = name.endsWith(".html") ? "text/html; charset=utf-8"
+                : name.endsWith(".js") ? "text/javascript; charset=utf-8"
+                : name.endsWith(".css") ? "text/css; charset=utf-8"
+                : name.endsWith(".svg") ? "image/svg+xml" : "application/octet-stream";
+        exchange.getResponseHeaders().set("Content-Type", contentType);
+        exchange.getResponseHeaders().set("Cache-Control", index
+                ? "no-store" : "public, max-age=31536000, immutable");
+        exchange.getResponseHeaders().set("X-Content-Type-Options", "nosniff");
+        exchange.getResponseHeaders().set("X-Frame-Options", "DENY");
+        exchange.getResponseHeaders().set("Referrer-Policy", "no-referrer");
+        exchange.getResponseHeaders().set("Content-Security-Policy",
+                "default-src 'self'; connect-src 'self'; img-src 'self' data:; "
+                        + "style-src 'self'; script-src 'self'; base-uri 'none'; "
+                        + "frame-ancestors 'none'; form-action 'none'");
+        exchange.sendResponseHeaders(200, bytes.length);
         try (OutputStream output = exchange.getResponseBody()) {
             output.write(bytes);
         }

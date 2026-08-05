@@ -67,3 +67,12 @@ jobs:
           set -euo pipefail
           bash scripts/test-core.sh
           java -cp build/core-test/classes dev.agentconfig.workbench.PlatformSafetyTests
+
+      - name: Build the local Vue UI
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --version
+          npm --version
+          npm ci --prefix ui
+          npm run build --prefix ui

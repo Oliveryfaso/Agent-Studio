@@ -361,3 +361,11 @@
 - v1 提供 runtime、preview、apply、rollback 四个 endpoint；preview 可在显式请求时返回同一 prepared plan 的真实 Diff 和 canonical target path，apply/rollback 原样保留 target/state write 与 recoveryRequired 语义。state root 固定为服务启动参数。
 - mutation 请求要求精确 Host、同源 Origin 与 256-bit 进程期 bearer token，不开放 CORS；加入 48 KiB body budget、严格 UTF-8 flat JSON parser、no-store/nosniff 与稳定错误 envelope。当前 token 仅打印到启动终端，后续 Vue 静态同源 bootstrap 不应持久化到 localStorage。
 - 新增 8 项 HTTP fixture，覆盖 loopback/runtime、token+Origin、preview→apply→byte-identical rollback、stale approval、missing target blocked、workspace link scope、strict JSON/media type 和 body budget。全量本地测试从 262 增至 270，conformance 保持 27 项；Gate 7 只标记为 UI transport started。
+
+## 2026-08-06：完成首个同源 Vue 单页真实闭环
+
+- 新增独立 `ui/`：Vue 3 + TypeScript + Vite 单页把 existing Codex Skill 的 workspace/guided request、真实 Diff、确认、apply receipt 与 guarded rollback 串成一条可操作流程；没有引入 router、状态库、UI 框架、外部字体或 CDN。
+- UI 将 `BLOCKED`、`NO_CHANGE`、`STALE_PREIMAGE`、`CURRENT_TARGET_CHANGED`、`RECOVERY_REQUIRED` 与网络错误分开呈现；输入变化立即废弃 preview/approval，rollback 保留 apply 当时的 workspace。Diff 可独立滚动和切换换行，360px 视口采用单列布局。
+- Java loopback 服务新增可选的 canonical UI root、窄静态路径白名单和 CSP/no-store/nosniff 等头。启动 URI 用 fragment 传入 token；Vue 读取后清除地址栏并只在内存持有。API-only 启动方式保持兼容。
+- 新增 `scripts/build-ui.sh` 和 `scripts/run-local-web.sh`；CI 在 Linux、macOS、Windows 的 Java safety 后同时执行 lockfile UI build。Vue/Vite/TypeScript/vue-tsc 是 UI 必需的构建依赖，不进入 Java 核心。
+- 新增 1 项 HTTP 静态/bootstrap fixture后，本地 Java 测试从 270 增至 271，conformance 保持 27 项；Vue build/typecheck 和真实浏览器 preview→apply→rollback 均通过，原始 fixture 字节恢复。Gate 7 进入“单页实验入口可用”，尚未达到普通用户安装与分发阶段。

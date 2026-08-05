@@ -3,7 +3,7 @@
 - 文档版本：1.3
 - 日期：2026-08-05
 - 项目类型：生产型 AI 应用闭环 + Agent 配置治理 + 评测与可观测性
-- 项目阶段：实验室原型 / existing-Skill 真实入口部分开放，Vue 前置 loopback transport 已启动
+- 项目阶段：实验室原型 / existing-Skill 真实入口部分开放，本地 Vue 单页闭环可运行
 - 当前执行范围：`Inspect → Draft → Diff/Export → Simple Apply/Rollback`；其他宿主、通用转换、GitHub、Router 与历史演化暂时冻结
 
 ## 1. 一句话目标
@@ -894,12 +894,15 @@ redaction profile + consent scope + retention class
 - Recovery Center 与脱敏审计。
 - 当前只开放 Codex project 中一个已存在 Skill 的替换：显式 workspace、真实完整 Diff、approval token、外置可信 state root、原始字节快照、原子替换、post-validate 与 guarded rollback。创建/多文件、自动恢复、跨进程 CAS 与完整 Windows reparse 仍关闭。
 
-### Phase 6.5：本地 UI transport（第一刀完成）
+### Phase 6.5：本地 UI 单页闭环（实验入口完成）
 
 - Java 21 `HttpServer` 只绑定 `127.0.0.1` 随机端口；state root 是进程启动参数，不由单次浏览器请求选择。
 - `/api/v1/runtime` 与 `skill-changes/preview|apply|rollback` 返回 typed schema v1；HTTP controller 直接调用 Blueprint、Draft 与 Controlled service，不启动子进程、不解析 CLI stdout。
 - mutation endpoint 同时校验精确 Host、同源 Origin 和 256-bit 进程期 bearer token，不发送宽泛 CORS。48 KiB body budget、严格 UTF-8/flat JSON 与稳定 error envelope 已进入 fixture。
-- 当前没有 Vue 页面、静态资源服务、文件选择器、history database、Recovery Center 或安装包；token 只打印到启动终端，下一刀由同源 Vue bootstrap 接管。
+- Vue 3 + TypeScript 单页现已完成 workspace/guided request、真实 Diff、确认、apply receipt 与 rollback；输入变化会废弃旧 preview/approval，并明确显示 blocked/no-change/stale/current-target-changed/recovery/network 状态。
+- Java 进程同源托管 `ui/dist` 的窄白名单静态资源。启动链接只在 fragment 中携带 token；Vue 读取后立即清除 fragment，并只把 token 保存在页面内存。
+- `scripts/build-ui.sh` 使用 lockfile 安装并构建；`scripts/run-local-web.sh <trusted-state-root>` 编译 Java 并启动页面。Vue/Vite/TypeScript/vue-tsc 是仅限 `ui/` 的必要构建依赖，不进入安全关键 Java 核心。
+- 当前仍没有文件选择器、示例向导生成器、history database、Recovery Center、桌面壳或安装包；关闭/刷新页面后必须使用当前进程打印的新启动链接重新进入。
 
 ### Phase 7：Wave 2 preview、可选 AI 和 Prompt Export
 
@@ -924,7 +927,7 @@ redaction profile + consent scope + retention class
 
 当前状态：Codex `inspect` 与 Skill S0–S2 已完成最小纵向切片。S3 fixture API 使用 manifest v3 闭合进程崩溃窗口并支持显式 pending discovery；在它之上新增的真实过渡入口可接受普通用户明确授权的项目，但只替换一个已存在的 Codex Skill。入口重新生成候选与 plan、要求独立 approval token、使用 workspace 外可信 state root，并提供 transaction rollback。它暂不承诺进程中断后的自动恢复、断电持久性或跨进程条件替换。3+3 仍是静态契约，不是已运行的模型路由 eval。
 
-### 当前 Gate 状态（2026-08-05）
+### 当前 Gate 状态（2026-08-06）
 
 | Gate | 目标 | 当前状态 | 仍缺什么 |
 |---|---|---|---|
@@ -933,8 +936,8 @@ redaction profile + consent scope + retention class
 | Gate 3 | Codex/Claude 项目语义读取与 IR | 实验性纵向切片完成 | 用户/managed 层、完整配置合并、外部批准、lossless parser/native validation；整体 adapter 仍为 Inventory |
 | Gate 4 | 双向转换预览 | canonical Codex root wrapper 纵向切片已验证；能力冻结 | 只有核心闭环验证后才复审通用/反向 renderer |
 | Gate 5 | ChangeSet、快照、事务与恢复 | fixture apply/rollback 进程恢复 + 显式 pending discovery 完成 | 断电持久性、OS 级 CAS/dir-handle-relative 防 TOCTOU、Windows reparse/junction、长期 vault；尚无自动启动恢复 |
-| Gate 6 | 真实工作区 Apply | 部分开放：existing Codex Skill 单文件 CLI | Vue 授权/审阅入口、自动恢复、创建/多文件、跨进程 CAS、Windows reparse 与分发加固 |
-| Gate 7 | UI、Wave 1、GitHub/分发 | UI transport started：loopback typed API 完成；GitHub 发布基线完成 | Vue 单页工作流、静态资源/bootstrap、其他宿主语义、PR 导出、安装包、签名/SBOM |
+| Gate 6 | 真实工作区 Apply | 部分开放：existing Codex Skill 单文件 CLI + Vue 审阅/批准/回退 | 自动恢复、创建/多文件、跨进程 CAS、Windows reparse 与分发加固 |
+| Gate 7 | UI、Wave 1、GitHub/分发 | 单页实验入口可用：typed loopback、同源 bootstrap、真实 Diff/apply/rollback；GitHub 发布基线完成 | workspace picker、普通用户向导、其他宿主语义、PR 导出、桌面安装包、签名/SBOM |
 
 ## 18. MVP 发布门槛
 

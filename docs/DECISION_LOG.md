@@ -315,6 +315,15 @@
 - 原因：先稳定 transport 和状态映射，Vue 才能把 BLOCKED、STALE、RECOVERY_REQUIRED 与网络错误正确分开；同时避免前端通过 shell 或任意 state path 绕过 Java 权限边界。
 - 暂缓：Vue 静态资源与 token bootstrap、文件选择器、路由、桌面壳、TLS/局域网、WebSocket、数据库、自动恢复、多宿主和安装包。Gate 7 只前进到 `UI transport started`。
 
+## ADR-037：首个真实 UI 采用同源 Vue 单页和 fragment bootstrap
+
+- 日期：2026-08-06
+- 状态：接受（实验入口）
+- 决定：首个页面只完成 `workspace + guided request → preview/diff → confirm/apply → receipt/rollback` 的纵向闭环，不同时建设路由、全资产 dashboard、文件编辑器或桌面壳。Vue 3 + TypeScript 负责内存状态机，Java 21 继续独占文件系统与事务能力。
+- 会话边界：Java 生成 256-bit 进程期 token，并只通过同源启动 URL 的 fragment 交给页面；fragment 不会进入 HTTP 请求，页面读取后立即 `replaceState` 清除，token 不进入 localStorage/sessionStorage。输入变化会废弃旧 preview 和 approval；rollback 绑定 apply 当时的 workspace，而不是用户后来编辑的输入框。单页同一时刻只保留一个活动回退锚点；用户必须先回退，或明确保留当前变更并关闭页面回退入口，才能批准下一笔写入。
+- 静态边界：Java 只从启动时固定的 canonical `ui/dist` 读取 `index.html`、hash asset 和 favicon，不提供目录浏览或 SPA 任意 fallback；HTML no-store，hash asset immutable，并发送 CSP、nosniff、DENY frame 与 no-referrer。UI 不引用外部字体或 CDN。
+- 依赖与暂缓：Vue/Vite/TypeScript/vue-tsc 只用于 `ui/` 构建，Java 核心保持零第三方依赖。当前仍要求用户粘贴绝对路径和结构化 guided request；文件选择器、自然语言表单助手、自动打开浏览器、安装包与恢复中心留到后续 gate。
+
 ## 待决问题
 
 - [ ] 为正式工程选择 Java 构建工具与最小模块骨架；当前纯 JDK 脚本仅服务 Phase 1 spike。

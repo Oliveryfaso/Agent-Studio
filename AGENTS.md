@@ -2,7 +2,7 @@
 
 ## Project status
 
-- This project is a lab prototype whose active delivery path is Codex-first: `Inspect -> Draft -> Diff/Export -> Simple Apply/Rollback`. Codex `inspect`, Skill S0-S2, an existing-Skill controlled CLI, and a loopback-only typed HTTP transport now exist. Gate 6 remains partial and Gate 7 has only started its UI transport; power-loss durability, OS-level CAS/TOCTOU, Windows reparse coverage, Vue UI, and packaging remain explicit blockers.
+- This project is a lab prototype whose active delivery path is Codex-first: `Inspect -> Draft -> Diff/Export -> Simple Apply/Rollback`. Codex `inspect`, Skill S0-S2, an existing-Skill controlled CLI, and a same-origin Vue/loopback single-page workflow now exist. Gate 6 remains partial and Gate 7 has a lab UI entry; power-loss durability, OS-level CAS/TOCTOU, Windows reparse coverage, ordinary-user workspace selection, and packaging remain explicit blockers.
 - Read `docs/PROJECT_GUIDE.md` before changing product behavior or architecture.
 - Do not scaffold frameworks or add dependencies unless the current task explicitly asks for them.
 
@@ -69,6 +69,7 @@ Build a local-first Skills lifecycle assistant that creates, organizes, routes, 
 ## Verification expectations
 
 - Run `scripts/test-core.sh` after changing Java scanner, registry, CLI, or safety behavior. It requires JDK 21 on `PATH`.
+- Run `scripts/build-ui.sh` after changing `ui/`; it must keep the lockfile build, avoid remote runtime assets, and produce `ui/dist/index.html`. Use `scripts/run-local-web.sh <trusted-state-root>` for same-origin browser smoke tests. The fragment token must be removed immediately and remain memory-only; changing workspace or guided request must invalidate preview/approval, while rollback must remain bound to the workspace used by apply.
 - Run `scripts/run-cli.sh <fixture-root>` only against a directory explicitly placed in scope; the CLI must remain metadata-only.
 - Run `scripts/run-context.sh <codex|claude-code> <fixture-root> <cwd>` for the experimental project instruction chain. Codex optionally accepts `--codex-config <snapshot.toml>`; Claude optionally accepts `--target-file <project-relative-file>`. Keep `PARTIAL` findings and limitations explicit.
 - Run `scripts/run-analyze.sh <codex|claude-code> <fixture-root> <cwd>` for Instruction IR and duplicate/conflict analysis; it accepts the same host-specific options as `run-context.sh`. Keep Analyze schema v1 separate from Context schema v2, and never add raw content, normalized directive text, or `realPath` to the default analysis JSON.

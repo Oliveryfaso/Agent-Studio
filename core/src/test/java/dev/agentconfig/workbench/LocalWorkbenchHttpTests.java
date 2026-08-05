@@ -26,6 +26,7 @@ public final class LocalWorkbenchHttpTests {
 
     private void runAll() throws Exception {
         run("runtime binds loopback without CORS", this::runtime);
+        run("built UI is same-origin with fragment token", this::staticUi);
         run("mutations require exact origin and bearer token", this::authBoundary);
         run("preview apply rollback is byte identical", this::endToEnd);
         run("stale approval preserves external edit", this::staleApproval);
@@ -70,6 +71,40 @@ public final class LocalWorkbenchHttpTests {
                     HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
             equal(405, method.statusCode(), "options");
         });
+    }
+
+    private void staticUi() throws Exception {
+        Path base = Files.createTempDirectory("acw-http-test-");
+        try {
+            Path state = Files.createDirectory(base.resolve("state"));
+            Path ui = Files.createDirectory(base.resolve("ui"));
+            Files.writeString(ui.resolve("index.html"), "<!doctype html><title>Workbench</title>",
+                    StandardCharsets.UTF_8);
+            Path assets = Files.createDirectory(ui.resolve("assets"));
+            Files.writeString(assets.resolve("app.js"), "export {};", StandardCharsets.UTF_8);
+            try (LocalWorkbenchServer server = LocalWorkbenchServer.start(state, ui)) {
+                check(server.launchUri().toString().startsWith(
+                        server.baseUri().toString() + "#token="), "launch token");
+                HttpResponse<String> index = client.send(HttpRequest.newBuilder(
+                        server.baseUri()).GET().build(),
+                        HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+                equal(200, index.statusCode(), "index");
+                contains(index.body(), "Workbench");
+                contains(index.headers().firstValue("Content-Security-Policy").orElse(""),
+                        "connect-src 'self'");
+                equal("no-store", index.headers().firstValue("Cache-Control").orElse(""),
+                        "index cache");
+
+                HttpResponse<String> asset = client.send(HttpRequest.newBuilder(
+                        server.baseUri().resolve("assets/app.js")).GET().build(),
+                        HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+                equal(200, asset.statusCode(), "asset");
+                contains(asset.headers().firstValue("Cache-Control").orElse(""), "immutable");
+                check(!index.body().contains(server.sessionToken()), "token in HTML");
+            }
+        } finally {
+            deleteOwned(base);
+        }
     }
 
     private void endToEnd() throws Exception {
