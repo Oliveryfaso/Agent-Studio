@@ -24,6 +24,8 @@ import dev.agentconfig.workbench.scan.ReadOnlyWorkspaceScanner;
 import dev.agentconfig.workbench.scan.ScanLimits;
 import dev.agentconfig.workbench.scan.ScanResult;
 import dev.agentconfig.workbench.scan.Severity;
+import dev.agentconfig.workbench.skill.CodexSkillInventory;
+import dev.agentconfig.workbench.skill.CodexSkillInventoryService;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.nio.file.InvalidPathException;
@@ -55,7 +57,33 @@ public final class Cli {
         if (args.length > 0 && "convert-preview".equals(args[0])) {
             return runConvertPreview(args, output, error);
         }
+        if (args.length > 0 && "skill-inventory".equals(args[0])) {
+            return runSkillInventory(args, output, error);
+        }
         return runScan(args, output, error);
+    }
+
+    private int runSkillInventory(String[] args, PrintWriter output, PrintWriter error) {
+        if (args.length != 3 || !"codex".equals(args[1])) {
+            usage(error);
+            return 2;
+        }
+        final Path root;
+        try {
+            root = Path.of(args[2]);
+        } catch (InvalidPathException exception) {
+            error.println("Invalid workspace path.");
+            return 2;
+        }
+        try {
+            CodexSkillInventory inventory = new CodexSkillInventoryService().inspect(root);
+            SkillInventoryJsonWriter.write(inventory, output);
+            return inventory.status() == CodexSkillInventory.Status.COMPLETE ? 0 : 3;
+        } catch (IOException exception) {
+            error.println("Skill inventory failed before a report could be produced: "
+                    + exception.getClass().getSimpleName());
+            return 2;
+        }
     }
 
     private int runInspect(String[] args, PrintWriter output, PrintWriter error) {
@@ -274,6 +302,7 @@ public final class Cli {
         error.println("   or: agent-config-workbench convert-preview <codex|claude-code>"
                 + " <claude-code|codex> <authorized-workspace> <current-directory>"
                 + " [source-host option]");
+        error.println("   or: agent-config-workbench skill-inventory codex <authorized-workspace>");
         error.println("Commands are metadata-only: they never write to or execute content from the workspace.");
         error.println("Git administrative metadata is not inspected unless --git-metadata is supplied.");
     }

@@ -4,7 +4,7 @@ GitHub: [Oliveryfaso/Agent-Studio](https://github.com/Oliveryfaso/Agent-Studio)
 
 Agent Config Workbench（智能体配置工作台）的长期目标，是在 Codex、Claude Code 和主流 vibe-coding 工具之间管理、生成、转换并安全应用 instructions、skills、rules 和 agents。当前实施刻意收敛为 Codex-first 的 `Inspect → Draft → Diff/Export → Simple Apply/Rollback` 单资产闭环；其他宿主、通用转换、GitHub、Router 和历史演化在核心用户价值验证前保持冻结。
 
-当前状态：**实验室原型，Codex-first 的第一个用户入口已可运行**。仓库已有零依赖的 Java 21 只读扫描器、Codex / Claude Code 项目级 Effective Instruction Chain、Instruction IR 分析和窄转换实验；新增的 `inspect` 会把 Codex 当前目录真正生效的项目指令、加载状态、确定问题和启发式建议整理为人类可读摘要。Vue、Skill Draft、Diff/Export、Simple Apply/Rollback 和 AI 起草仍未实现。
+当前状态：**实验室原型，Codex-first 的 Inspect 与 Skill Inventory 第一子门已可运行**。仓库已有零依赖的 Java 21 只读扫描器、Codex / Claude Code 项目级 Effective Instruction Chain、Instruction IR 分析和窄转换实验；`inspect` 会解释当前目录真正生效的 Codex 项目指令，`skill-inventory` 会只读列出项目内 Codex Skill package、最小 frontmatter 状态、重复声明名、supporting-file 数量和可执行/符号链接风险。Persistence triage、SkillBlueprint、候选正文、Vue、Diff/Export、Simple Apply/Rollback 和 AI 起草仍未实现。
 
 ## 当前产品焦点
 
@@ -56,7 +56,8 @@ Claude Code 与其他宿主仍保留在长期路线中；现有 conversion、Git
 - 根级、单一、完整的 `AGENTS.md → CLAUDE.md` canonical wrapper `@AGENTS.md\n` 已通过受限内存 renderer、recipe-specific Claude 结构验证和语义 round-trip；候选字节不进入 JSON。existing target 只比较 hash/size，identical、conflict、unsafe、stale 分开表达，不自动 merge。
 - 其他 instruction 结构仍通常为 `ASSISTED/METADATA_ONLY`，policy、hook、plugin、permission、可执行行为等仍为 `UNSUPPORTED`；任何 `NOT_RUN`、`FAILED`、`UNKNOWN` 或 unsafe target 都不能伪装成 fully validated。
 - `inspect codex` 将 Context 与 Analyze 投影为中文摘要，默认不输出正文、hash、source ID 或 `realPath`，并固定说明零写入。
-- 已定义 Ubuntu、macOS、Windows 三平台安全 CI；当前本地 165 项 fixture 全部通过，其中版本化 conformance 为 27 项，工作流尚待真实 GitHub runner 首次验证。
+- `skill-inventory codex` 只检查根级 `.agents/skills/<name>/SKILL.md`：读取有上限的 UTF-8 frontmatter，输出逻辑路径、hash、大小、最小字段状态、supporting-file 数量与风险；supporting files 只枚举路径，不读取或执行内容。报告固定 `contentIncluded=false`、`writesPerformed=false`。
+- Ubuntu、macOS、Windows 三平台 CI 已真实通过；当前本地 177 项 fixture 全部通过，其中版本化 conformance 为 27 项。
 
 需要 JDK 21。当前 spike 不依赖 Gradle、Maven 或第三方库：
 
@@ -65,6 +66,7 @@ scripts/test-core.sh
 scripts/run-conformance.sh
 scripts/inspect-codex.sh /absolute/path/to/authorized-workspace
 scripts/inspect-codex.sh /absolute/path/to/authorized-workspace /absolute/path/to/authorized-workspace/subdir
+scripts/run-skill-inventory.sh /absolute/path/to/authorized-workspace
 scripts/run-cli.sh /absolute/path/to/authorized-workspace
 scripts/run-cli.sh /absolute/path/to/authorized-workspace --git-metadata
 scripts/run-context.sh codex /absolute/path/to/authorized-workspace /absolute/path/to/authorized-workspace/subdir
@@ -93,4 +95,4 @@ scripts/run-convert-preview.sh claude-code codex /absolute/path/to/authorized-wo
 
 ## 下一里程碑
 
-`inspect` 纵向切片完成后，下一步进入 Codex Project Skill Draft：先做 Codex project Skill inventory，再实现 persistence triage、`SkillBlueprint v1`、内存候选、静态检查和 Diff/Export，全程零目标写入。完成真实用户验证后再实现单文件 Simple Apply/Rollback；不并行扩展通用转换、更多宿主、GitHub、Router 或历史演化。
+`inspect` 与 Skill Inventory 第一子门完成后，下一步补齐 S0 的安全引用图，再实现 persistence triage、`SkillBlueprint v1`、内存候选、静态检查和 Diff/Export，全程零目标写入。完成真实用户验证后再实现单文件 Simple Apply/Rollback；不并行扩展通用转换、更多宿主、Router 或历史演化。

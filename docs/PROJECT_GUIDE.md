@@ -843,7 +843,7 @@ redaction profile + consent scope + retention class
 - 定义 HostAdapter、HostDescriptor、capability vocabulary、registry manifest 与 maturity gate；注册 Codex、Claude、Cursor、Copilot、Windsurf/Devin 的 inventory manifest。
 - dry-run 零写入测试必须先通过。
 - 当前切片：registry、allowlist discovery、logical/real path、streaming SHA-256、编码/换行提示、符号链接 fail-closed、深度/总条目/字节预算、协作取消、确定性部分结果、显式 Git 元数据探测与 JSON CLI 已实现。
-- 剩余平台 gate：Windows junction/reparse-point fixture、可重复并发替换 fixture，以及三平台 GitHub runner 首次通过。它们仍是发布前要求，但在实验原型阶段不阻塞后续只读功能；当前五个 adapter 仍保持 `INVENTORY`。
+- 剩余平台 gate：Windows junction/reparse-point fixture 与可重复并发替换 fixture；三平台 GitHub runner 已通过。它们仍是发布前要求，但在实验原型阶段不阻塞后续只读功能；当前五个 adapter 仍保持 `INVENTORY`。
 
 ### Phase 2：Codex / Claude Core adapters 与 Effective Context Compiler（进行中）
 
@@ -863,7 +863,7 @@ redaction profile + consent scope + retention class
 - `scripts/run-convert-preview.sh codex claude-code <authorized-root> <cwd> [--codex-config <snapshot>]` 及反向命令已可运行。命令严格拒绝 `PARTIAL` IR，限定目标探测在授权根目录，不跟随 symlink，只输出元数据，且固定 `writesPerformed=false`、`applyEligible=false`。
 - 单一、完整、根级 `AGENTS.md → CLAUDE.md` 会在受限内存形成 canonical `@AGENTS.md\n` wrapper，并实际运行 recipe-specific Claude 结构验证和 hash/scope/import round-trip。candidate bytes 不进入默认 JSON；existing target 只使用 bounded hash/size 元数据，identical/conflict/unsafe/stale 分开表达。
 - 其余结构因 content-free IR 不携带正文而通常保持 `ASSISTED/METADATA_ONLY`。Claude → Codex 正文、nested chain、path rule、local override 仍需独立授权的 ephemeral content plane；这不代表整体 adapter maturity 晋级。
-- 当前本地 165 项 fixture 全部通过；后续以 `scripts/test-core.sh` 当次完整输出为准。
+- 当前本地 177 项 fixture 全部通过；后续以 `scripts/test-core.sh` 当次完整输出为准。
 
 ### Phase 3：Analyzer、Core conversion 与 UI
 
@@ -911,7 +911,7 @@ redaction profile + consent scope + retention class
 - S5：Claude 同等闭环。
 - S6：依据用户证据解冻其他宿主、Router、eval、history 和跨宿主能力。
 
-当前状态：Codex `inspect` 第一刀已完成，S0/S1 尚未实现。旧 Gate 4 conversion 继续作为技术能力记录，不再决定近期产品顺序。详细 gate 见 [SKILL_LIFECYCLE_SPEC.md](SKILL_LIFECYCLE_SPEC.md)。
+当前状态：Codex `inspect` 第一刀与 S0 Skill Inventory 第一子门已完成；安全引用图仍未完成，所以 S0 尚未整体晋级，S1 尚未实现。旧 Gate 4 conversion 继续作为技术能力记录，不再决定近期产品顺序。详细 gate 见 [SKILL_LIFECYCLE_SPEC.md](SKILL_LIFECYCLE_SPEC.md)。
 
 ### 当前 Gate 状态（2026-08-04）
 

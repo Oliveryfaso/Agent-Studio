@@ -290,3 +290,11 @@
 - 纯在线网页不进入主路线，因为它不能独立满足本地目录授权、原子写入、备份回退和默认离线要求。
 - GitHub 正式仓库确定为 `Oliveryfaso/Agent-Studio`；发布前忽略 build、AppleDouble、IDE、编译器参数、日志和本地 workbench 状态，并执行敏感文件名、凭据模式和大文件审计。
 - 首次真实 CI 暴露 macOS Java toolchain 环境变量差异和 Windows Git Bash 绝对路径 argfile 不兼容；改用固定提交的 `actions/setup-java`，并让 javac source argfile 使用仓库相对路径后，Linux、macOS、Windows 三个平台全部通过。
+
+## 2026-08-05：完成 Codex Project Skill Inventory 第一子门
+
+- 新增 `skill-inventory codex <authorized-workspace>` 与 `scripts/run-skill-inventory.sh`，只处理根级 `.agents/skills/<name>/SKILL.md`，输出 schema v1 元数据报告并固定 `contentIncluded=false`、`writesPerformed=false`。
+- inventory 对 `SKILL.md` 使用 128 KiB 上限和严格 UTF-8，检查最小 `name` / `description` frontmatter、目录名一致性与重复声明名；supporting files 只枚举路径和数量，不读取正文、不执行脚本。
+- `.agents`、`skills`、package、`SKILL.md` 与 supporting path 的符号链接均不跟随；scripts 目录、常见可执行扩展名和 POSIX execute bit 只形成风险标记，不触发执行。
+- 新增 12 项 fixture，覆盖空目录、合法 package、元数据错误与无效/错位声明值脱敏、重复名、祖先/Skill/support symlink、entry budget、零写入与 CLI 隐私合同；全量本地 fixture 从 165 增至 177，conformance 保持 27 项。
+- 本轮只完成 S0 的 package/metadata/risk 子门；安全引用图尚未实现，S1 persistence triage 与 `SkillBlueprint v1` 仍未开始。
