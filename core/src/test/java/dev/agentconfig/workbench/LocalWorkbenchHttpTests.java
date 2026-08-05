@@ -81,7 +81,7 @@ public final class LocalWorkbenchHttpTests {
             contains(preview.body(), "\"status\": \"READY_REPLACE\"");
             contains(preview.body(), "\"diffIncluded\": true");
             contains(preview.body(), "-old skill body\\n");
-            contains(preview.body(), fixture.target().toRealPath().toString());
+            contains(preview.body(), json(fixture.target().toRealPath().toString()));
             String token = capture(preview.body(),
                     "\\\"approvalToken\\\": \\\"(acw_apply1_[0-9a-f]{64})\\\"");
 
