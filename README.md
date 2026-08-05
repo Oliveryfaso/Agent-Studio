@@ -4,7 +4,7 @@ GitHub: [Oliveryfaso/Agent-Studio](https://github.com/Oliveryfaso/Agent-Studio)
 
 Agent Config Workbench（智能体配置工作台）的长期目标，是在 Codex、Claude Code 和主流 vibe-coding 工具之间管理、生成、转换并安全应用 instructions、skills、rules 和 agents。当前实施刻意收敛为 Codex-first 的 `Inspect → Draft → Diff/Export → Simple Apply/Rollback` 单资产闭环；其他宿主、通用转换、GitHub、Router 和历史演化在核心用户价值验证前保持冻结。
 
-当前状态：**实验室原型，Codex-first 的 Inspect、Skill S0–S2 和一个受控真实入口已可运行**。仓库已有零依赖的 Java 21 治理内核；S1/S2 可形成并静态验证内存 `SKILL.md`。S3 fixture 已验证 apply/rollback 进程恢复与 pending discovery；新的过渡 CLI 可对用户明确指定的普通项目中一个**已存在**的 Codex project Skill 执行 `preview → approve/apply → rollback`。它不会创建 Skill/目录，不保证断电恢复、跨进程并发 CAS 或完整 Windows reparse 防护，因此 Gate 6 仅为部分开放，Vue 和可选 AI 起草仍未实现。
+当前状态：**实验室原型，Codex-first 的 Inspect、Skill S0–S2、受控真实入口和 loopback API 已可运行**。Java 21 治理内核可对用户明确指定的普通项目中一个**已存在**的 Codex project Skill 执行 `preview → approve/apply → rollback`；新的 typed HTTP transport 直接复用同一服务，固定使用启动时指定的外置 state root，为 Vue 提供边界。它不会创建 Skill/目录，不保证断电恢复、跨进程并发 CAS 或完整 Windows reparse 防护，因此 Gate 6 仍部分开放，Gate 7 仅开始 UI transport，Vue 页面尚未实现。
 
 ## 当前产品焦点
 
@@ -61,7 +61,7 @@ Claude Code 与其他宿主仍保留在长期路线中；现有 conversion、Git
 - `skill-draft-preview codex` 复用同一向导输入，仅接受 `BLUEPRINT_READY` 的 Codex project Skill。`codex-project-skill-template-v1` 生成只有 `name` / `description` frontmatter 的单文件候选；触发与排除被写入 description，正文采用固定 progressive-disclosure 章节并转义用户 Markdown 结构。独立的 `codex-project-skill-static-v1` 对最终 UTF-8/LF 字节、description 安全约束、预算、路径、canonical content 和 hash 绑定做检查。默认 JSON 不含正文；只有 `READY` 候选可用 `--export content|diff|prompt` 显式输出。Diff 自带 `SYNTHETIC_NEW_FILE / NOT_CHECKED` 标记并以 `/dev/null` 为基线，不代表检查过磁盘目标；tools、额外权限、supporting-file proposal 或非 LOW risk 返回 `REVIEW_REQUIRED`，且 raw export 被阻断。
 - S3 fixture transaction 只接受 marker 内容精确匹配的临时 workspace，并要求独立 marker state root。manifest v3 同时支持 `PREPARED → COMMIT_INTENT → APPLIED` 与 `APPLIED → ROLLBACK_INTENT → ROLLED_BACK`；`recoverTransaction` 只在 source/result identity、hash、权限、快照、stage 与拓扑组合唯一时推进。`scanPendingTransactions` 只枚举 state root 直接子项，受 direct-entry/manifest 双预算与稳定 cursor 约束，只返回 transaction metadata，不读出候选内容、不写入也不自动恢复。receipt 分开记录本次目标写与状态写。fixture API 本身没有公开 CLI；真实过渡 CLI 使用更窄的 existing-only 合同，暂未继承自动恢复。不提供断电级 directory fsync、OS 级 CAS/防 TOCTOU 或 Windows junction 完整证明。
 - `skill-change-preview/apply/rollback` 是首个真实工作区入口，只处理一个已存在的 Codex project Skill。它绑定真实 preimage 与 Diff、要求显式 approval token，把 byte-exact snapshot 放入 workspace 外的可信 state root，保留权限并验证写入；rollback 会拒绝 hash、identity 或权限已变化的当前目标。
-- Ubuntu、macOS、Windows 三平台 CI 基线已真实通过并持续复验；当前本地 262 项测试用例全部通过，其中版本化 conformance 为 27 项。每次变更仍以对应远端 CI run 为合并依据。
+- Ubuntu、macOS、Windows 三平台 CI 基线已真实通过并持续复验；当前本地 270 项测试用例全部通过，其中版本化 conformance 为 27 项。每次变更仍以对应远端 CI run 为合并依据。
 
 需要 JDK 21。当前 spike 不依赖 Gradle、Maven 或第三方库：
 
@@ -80,6 +80,7 @@ scripts/run-skill-change.sh preview /absolute/path/to/workspace /absolute/path/t
 scripts/run-skill-change.sh preview /absolute/path/to/workspace /absolute/path/to/request.intent --diff
 scripts/run-skill-change.sh apply /absolute/path/to/workspace /absolute/path/to/trusted-state /absolute/path/to/request.intent '<approval-token>'
 scripts/run-skill-change.sh rollback /absolute/path/to/workspace /absolute/path/to/trusted-state '<transaction-id>'
+scripts/run-local-api.sh /absolute/path/to/trusted-state
 scripts/run-cli.sh /absolute/path/to/authorized-workspace
 scripts/run-cli.sh /absolute/path/to/authorized-workspace --git-metadata
 scripts/run-context.sh codex /absolute/path/to/authorized-workspace /absolute/path/to/authorized-workspace/subdir
@@ -131,6 +132,8 @@ risk: LOW
 加入 `supporting-file` 只会记录尚未生成的 package-relative proposal，并令 S2 返回 `REVIEW_REQUIRED`；本阶段不会生成虚假链接或 supporting file 内容。
 
 前两个 draft 命令不写目标工作区。`run-skill-change.sh preview` 读取真实目标并输出 metadata；只有 `--diff` 会显示完整正文差异。Apply 必须再次提供同一个向导、preview 返回的 approval token，以及 workspace 外、由当前用户控制的可信 state 目录。当前入口只替换已存在、严格 UTF-8/LF 且以换行结尾的 `.agents/skills/<name>/SKILL.md`；不会创建 Skill 或父目录。成功回执中的 transaction ID 可用于显式 rollback。approval token 是计划完整性绑定，不是密码或身份凭证。
+
+`run-local-api.sh` 启动 `127.0.0.1` 随机端口服务，并在当前终端打印进程期 bearer token。POST API 要求精确 Host、同源 Origin 和 token，不开放 CORS；state root 在进程启动时固定，浏览器请求不能改写。当前 API 是 Vue 的开发前置，不是面向局域网或互联网的服务。
 
 其他分类信号为 `duration: one-shot|persistent`、`isolated-context`、`independent-responsibility`、`special-tool-boundary`、`deterministic-enforcement` 和 `executable-automation`。布尔值只接受 `true|false`；executable automation 的优先级最高并默认阻断。
 

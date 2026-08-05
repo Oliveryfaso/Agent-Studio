@@ -3,7 +3,7 @@
 - 文档版本：1.3
 - 日期：2026-08-05
 - 项目类型：生产型 AI 应用闭环 + Agent 配置治理 + 评测与可观测性
-- 项目阶段：实验室原型 / Codex-first Inspect 与 Skill S0–S2 已可运行，existing-Skill 真实入口部分开放
+- 项目阶段：实验室原型 / existing-Skill 真实入口部分开放，Vue 前置 loopback transport 已启动
 - 当前执行范围：`Inspect → Draft → Diff/Export → Simple Apply/Rollback`；其他宿主、通用转换、GitHub、Router 与历史演化暂时冻结
 
 ## 1. 一句话目标
@@ -894,6 +894,13 @@ redaction profile + consent scope + retention class
 - Recovery Center 与脱敏审计。
 - 当前只开放 Codex project 中一个已存在 Skill 的替换：显式 workspace、真实完整 Diff、approval token、外置可信 state root、原始字节快照、原子替换、post-validate 与 guarded rollback。创建/多文件、自动恢复、跨进程 CAS 与完整 Windows reparse 仍关闭。
 
+### Phase 6.5：本地 UI transport（第一刀完成）
+
+- Java 21 `HttpServer` 只绑定 `127.0.0.1` 随机端口；state root 是进程启动参数，不由单次浏览器请求选择。
+- `/api/v1/runtime` 与 `skill-changes/preview|apply|rollback` 返回 typed schema v1；HTTP controller 直接调用 Blueprint、Draft 与 Controlled service，不启动子进程、不解析 CLI stdout。
+- mutation endpoint 同时校验精确 Host、同源 Origin 和 256-bit 进程期 bearer token，不发送宽泛 CORS。48 KiB body budget、严格 UTF-8/flat JSON 与稳定 error envelope 已进入 fixture。
+- 当前没有 Vue 页面、静态资源服务、文件选择器、history database、Recovery Center 或安装包；token 只打印到启动终端，下一刀由同源 Vue bootstrap 接管。
+
 ### Phase 7：Wave 2 preview、可选 AI 和 Prompt Export
 
 - 为 Cline、Roo Code、Gemini CLI、OpenCode、Continue 提供只读 inventory 与转换预览；Aider 提供 Export Only。
@@ -927,7 +934,7 @@ redaction profile + consent scope + retention class
 | Gate 4 | 双向转换预览 | canonical Codex root wrapper 纵向切片已验证；能力冻结 | 只有核心闭环验证后才复审通用/反向 renderer |
 | Gate 5 | ChangeSet、快照、事务与恢复 | fixture apply/rollback 进程恢复 + 显式 pending discovery 完成 | 断电持久性、OS 级 CAS/dir-handle-relative 防 TOCTOU、Windows reparse/junction、长期 vault；尚无自动启动恢复 |
 | Gate 6 | 真实工作区 Apply | 部分开放：existing Codex Skill 单文件 CLI | Vue 授权/审阅入口、自动恢复、创建/多文件、跨进程 CAS、Windows reparse 与分发加固 |
-| Gate 7 | UI、Wave 1、GitHub/分发 | GitHub 发布基线完成，其余未开始 | Vue 工作流、其他宿主语义、PR 导出、安装包、签名/SBOM |
+| Gate 7 | UI、Wave 1、GitHub/分发 | UI transport started：loopback typed API 完成；GitHub 发布基线完成 | Vue 单页工作流、静态资源/bootstrap、其他宿主语义、PR 导出、安装包、签名/SBOM |
 
 ## 18. MVP 发布门槛
 

@@ -354,3 +354,10 @@
 - Preview 默认 metadata-only，显式 `--diff` 才输出真实完整替换 Diff；approval token 绑定 workspace、logical path、candidate、preimage identity/hash/权限与 Diff。Apply 使用 workspace 外的可信 state root 保存原始字节与 manifest，写后验证；rollback 同时校验 applied identity、hash 与权限。
 - subagent 审查修复了预占 stage 被误删、目标 move 后回执误报未写、apply intent 无恢复路径、rollback 终态写失败无法收敛，以及同字节外部替换可能被覆盖的问题。回执分别记录 target/state write 与 recoveryRequired。
 - 新增 9 项真实临时 workspace CLI fixture，全量本地测试从 253 增至 262，conformance 保持 27 项。该入口是产品原型，不含自动进程中断恢复、跨进程 OS CAS、断电持久性和完整 Windows reparse 证明，因此 Gate 6 只标记为部分开放。
+
+## 2026-08-06：完成 Vue 前置 loopback API 纵向切片
+
+- 新增无第三方 Java 依赖的 `LocalWorkbenchServer`，只绑定 `127.0.0.1` 随机端口。API 直接复用 Blueprint → Codex Skill Draft → Controlled Existing Skill service，不执行 CLI 子进程或解析 stdout。
+- v1 提供 runtime、preview、apply、rollback 四个 endpoint；preview 可在显式请求时返回同一 prepared plan 的真实 Diff 和 canonical target path，apply/rollback 原样保留 target/state write 与 recoveryRequired 语义。state root 固定为服务启动参数。
+- mutation 请求要求精确 Host、同源 Origin 与 256-bit 进程期 bearer token，不开放 CORS；加入 48 KiB body budget、严格 UTF-8 flat JSON parser、no-store/nosniff 与稳定错误 envelope。当前 token 仅打印到启动终端，后续 Vue 静态同源 bootstrap 不应持久化到 localStorage。
+- 新增 8 项 HTTP fixture，覆盖 loopback/runtime、token+Origin、preview→apply→byte-identical rollback、stale approval、missing target blocked、workspace link scope、strict JSON/media type 和 body budget。全量本地测试从 262 增至 270，conformance 保持 27 项；Gate 7 只标记为 UI transport started。

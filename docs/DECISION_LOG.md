@@ -306,6 +306,15 @@
 - 最低保护：拒绝链接/reparse-like 路径、stale preimage、非法 state 拓扑和非 canonical 目标文本；同名预存 stage 不归事务所有且不得清理；正常 APPLIED rollback 绑定 apply 后 identity；manifest 仍处于 apply intent 且目标已是候选时允许显式恢复性 rollback。
 - 限制：真实入口尚未复用 fixture v3 的完整 crash-recovery scanner，不提供跨进程锁/OS CAS、dir-handle-relative 操作、directory fsync、长期 vault 或完整 Windows junction 证明。它是 Gate 6 的可用性验证，不是发布级文件事务声明。
 
+## ADR-036：Vue 之前先固定 loopback typed transport
+
+- 日期：2026-08-06
+- 状态：接受
+- 决定：第一刀 UI 基础设施只实现 Java 21 loopback API，不同时搭建 Vue 页面。HTTP controller 直接调用现有确定性 service，使用 typed response；禁止启动 CLI 子进程或把 stdout Diff 当结构化协议。state root 是服务启动参数，不能由每次浏览器 Apply 请求任意指定。
+- 接口与边界：只提供 runtime、existing Codex Skill preview/apply/rollback。服务精确绑定 `127.0.0.1` 随机端口；mutation 同时要求精确 Host、同源 Origin 和进程期随机 bearer token，无 CORS。请求有严格 UTF-8、flat JSON 和 48 KiB 预算，错误不回显异常、raw request、Diff、token 或日志路径。
+- 原因：先稳定 transport 和状态映射，Vue 才能把 BLOCKED、STALE、RECOVERY_REQUIRED 与网络错误正确分开；同时避免前端通过 shell 或任意 state path 绕过 Java 权限边界。
+- 暂缓：Vue 静态资源与 token bootstrap、文件选择器、路由、桌面壳、TLS/局域网、WebSocket、数据库、自动恢复、多宿主和安装包。Gate 7 只前进到 `UI transport started`。
+
 ## 待决问题
 
 - [ ] 为正式工程选择 Java 构建工具与最小模块骨架；当前纯 JDK 脚本仅服务 Phase 1 spike。
