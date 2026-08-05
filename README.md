@@ -4,7 +4,7 @@ GitHub: [Oliveryfaso/Agent-Studio](https://github.com/Oliveryfaso/Agent-Studio)
 
 Agent Config Workbench（智能体配置工作台）的长期目标，是在 Codex、Claude Code 和主流 vibe-coding 工具之间管理、生成、转换并安全应用 instructions、skills、rules 和 agents。当前实施刻意收敛为 Codex-first 的 `Inspect → Draft → Diff/Export → Simple Apply/Rollback` 单资产闭环；其他宿主、通用转换、GitHub、Router 和历史演化在核心用户价值验证前保持冻结。
 
-当前状态：**实验室原型，Codex-first 的 Inspect 与 Skill S0–S2 已可运行，S3 fixture 内的 apply/rollback 进程崩溃恢复与显式 pending discovery 已验证**。仓库已有零依赖的 Java 21 治理内核；S1/S2 可形成并静态验证内存 `SKILL.md`。S3 manifest v3 以 `COMMIT_INTENT` 和 `ROLLBACK_INTENT` 分别闭合 apply/rollback 的进程崩溃窗口，并提供有预算、只读且不会自动恢复的 pending transaction 扫描 API。它没有 CLI，也拒绝普通项目；不保证断电持久性或并发路径安全，因此真实工作区 Apply、Vue 和可选 AI 起草仍未实现。
+当前状态：**实验室原型，Codex-first 的 Inspect、Skill S0–S2 和一个受控真实入口已可运行**。仓库已有零依赖的 Java 21 治理内核；S1/S2 可形成并静态验证内存 `SKILL.md`。S3 fixture 已验证 apply/rollback 进程恢复与 pending discovery；新的过渡 CLI 可对用户明确指定的普通项目中一个**已存在**的 Codex project Skill 执行 `preview → approve/apply → rollback`。它不会创建 Skill/目录，不保证断电恢复、跨进程并发 CAS 或完整 Windows reparse 防护，因此 Gate 6 仅为部分开放，Vue 和可选 AI 起草仍未实现。
 
 ## 当前产品焦点
 
@@ -59,8 +59,9 @@ Claude Code 与其他宿主仍保留在长期路线中；现有 conversion、Git
 - `skill-inventory codex` 只检查根级 `.agents/skills/<name>/SKILL.md`：读取有上限的 UTF-8 frontmatter 与正文内联引用，输出 schema v2 的逻辑路径、hash、大小、最小字段状态、supporting-file 数量、风险和安全引用图。`codex-skill-inline-reference-v1` 支持包内 `[link](relative)` / `![image](relative)`、angle path、query 与 fragment；不宣称 full CommonMark。只有 `RESOLVED` edge 暴露 target logical path；`MISSING/UNKNOWN` 只保留 source、line/column、类型与状态。supporting files 只枚举路径，不读取或执行内容，报告固定 `contentIncluded=false`、`writesPerformed=false`。
 - `skill-blueprint-preview codex` 从 stdin 读取不超过 32 KiB 的严格 UTF-8 向导；Java 核心不接收 workspace 路径。便捷脚本只打开用户显式选择的单个普通非符号链接文件。自然语言只进入显式 goal/description 等 Blueprint 字段，分类只使用 recurrence/trigger/success/isolation/enforcement 等向导事实，不使用关键词猜测。输出固定 `workspaceContentIncluded=false`、`userProvidedContentIncluded=true`、`rawRequestIncluded=false`、`llmUsed=false`、`writesPerformed=false`、`applyEligible=false`；未确认、缺字段和高风险自动化退出 3 且不生成 Blueprint。
 - `skill-draft-preview codex` 复用同一向导输入，仅接受 `BLUEPRINT_READY` 的 Codex project Skill。`codex-project-skill-template-v1` 生成只有 `name` / `description` frontmatter 的单文件候选；触发与排除被写入 description，正文采用固定 progressive-disclosure 章节并转义用户 Markdown 结构。独立的 `codex-project-skill-static-v1` 对最终 UTF-8/LF 字节、description 安全约束、预算、路径、canonical content 和 hash 绑定做检查。默认 JSON 不含正文；只有 `READY` 候选可用 `--export content|diff|prompt` 显式输出。Diff 自带 `SYNTHETIC_NEW_FILE / NOT_CHECKED` 标记并以 `/dev/null` 为基线，不代表检查过磁盘目标；tools、额外权限、supporting-file proposal 或非 LOW risk 返回 `REVIEW_REQUIRED`，且 raw export 被阻断。
-- S3 fixture transaction 只接受 marker 内容精确匹配的临时 workspace，并要求独立 marker state root。manifest v3 同时支持 `PREPARED → COMMIT_INTENT → APPLIED` 与 `APPLIED → ROLLBACK_INTENT → ROLLED_BACK`；`recoverTransaction` 只在 source/result identity、hash、权限、快照、stage 与拓扑组合唯一时推进。`scanPendingTransactions` 只枚举 state root 直接子项，受 direct-entry/manifest 双预算与稳定 cursor 约束，只返回 transaction metadata，不读出候选内容、不写入也不自动恢复。receipt 分开记录本次目标写与状态写。它没有公开 CLI，不能用于普通项目，也没有断电级 directory fsync、OS 级 CAS/防 TOCTOU 或 Windows junction 完整证明；fixture state 不承诺跨 manifest schema 版本迁移。
-- Ubuntu、macOS、Windows 三平台 CI 基线已真实通过并持续复验；当前本地 253 项测试用例全部通过，其中版本化 conformance 为 27 项。每次变更仍以对应远端 CI run 为合并依据。
+- S3 fixture transaction 只接受 marker 内容精确匹配的临时 workspace，并要求独立 marker state root。manifest v3 同时支持 `PREPARED → COMMIT_INTENT → APPLIED` 与 `APPLIED → ROLLBACK_INTENT → ROLLED_BACK`；`recoverTransaction` 只在 source/result identity、hash、权限、快照、stage 与拓扑组合唯一时推进。`scanPendingTransactions` 只枚举 state root 直接子项，受 direct-entry/manifest 双预算与稳定 cursor 约束，只返回 transaction metadata，不读出候选内容、不写入也不自动恢复。receipt 分开记录本次目标写与状态写。fixture API 本身没有公开 CLI；真实过渡 CLI 使用更窄的 existing-only 合同，暂未继承自动恢复。不提供断电级 directory fsync、OS 级 CAS/防 TOCTOU 或 Windows junction 完整证明。
+- `skill-change-preview/apply/rollback` 是首个真实工作区入口，只处理一个已存在的 Codex project Skill。它绑定真实 preimage 与 Diff、要求显式 approval token，把 byte-exact snapshot 放入 workspace 外的可信 state root，保留权限并验证写入；rollback 会拒绝 hash、identity 或权限已变化的当前目标。
+- Ubuntu、macOS、Windows 三平台 CI 基线已真实通过并持续复验；当前本地 262 项测试用例全部通过，其中版本化 conformance 为 27 项。每次变更仍以对应远端 CI run 为合并依据。
 
 需要 JDK 21。当前 spike 不依赖 Gradle、Maven 或第三方库：
 
@@ -75,6 +76,10 @@ scripts/run-skill-draft-preview.sh /absolute/path/to/request.intent
 scripts/run-skill-draft-preview.sh /absolute/path/to/request.intent --export content
 scripts/run-skill-draft-preview.sh /absolute/path/to/request.intent --export diff
 scripts/run-skill-draft-preview.sh /absolute/path/to/request.intent --export prompt
+scripts/run-skill-change.sh preview /absolute/path/to/workspace /absolute/path/to/request.intent
+scripts/run-skill-change.sh preview /absolute/path/to/workspace /absolute/path/to/request.intent --diff
+scripts/run-skill-change.sh apply /absolute/path/to/workspace /absolute/path/to/trusted-state /absolute/path/to/request.intent '<approval-token>'
+scripts/run-skill-change.sh rollback /absolute/path/to/workspace /absolute/path/to/trusted-state '<transaction-id>'
 scripts/run-cli.sh /absolute/path/to/authorized-workspace
 scripts/run-cli.sh /absolute/path/to/authorized-workspace --git-metadata
 scripts/run-context.sh codex /absolute/path/to/authorized-workspace /absolute/path/to/authorized-workspace/subdir
@@ -125,7 +130,7 @@ risk: LOW
 
 加入 `supporting-file` 只会记录尚未生成的 package-relative proposal，并令 S2 返回 `REVIEW_REQUIRED`；本阶段不会生成虚假链接或 supporting file 内容。
 
-Java 命令本身不写目标工作区；便捷脚本会在本仓库 `build/` 下编译临时 class cache，但不会改动向导文件或任何候选目标目录。
+前两个 draft 命令不写目标工作区。`run-skill-change.sh preview` 读取真实目标并输出 metadata；只有 `--diff` 会显示完整正文差异。Apply 必须再次提供同一个向导、preview 返回的 approval token，以及 workspace 外、由当前用户控制的可信 state 目录。当前入口只替换已存在、严格 UTF-8/LF 且以换行结尾的 `.agents/skills/<name>/SKILL.md`；不会创建 Skill 或父目录。成功回执中的 transaction ID 可用于显式 rollback。approval token 是计划完整性绑定，不是密码或身份凭证。
 
 其他分类信号为 `duration: one-shot|persistent`、`isolated-context`、`independent-responsibility`、`special-tool-boundary`、`deterministic-enforcement` 和 `executable-automation`。布尔值只接受 `true|false`；executable automation 的优先级最高并默认阻断。
 
@@ -141,4 +146,4 @@ Java 命令本身不写目标工作区；便捷脚本会在本仓库 `build/` �
 
 ## 下一里程碑
 
-S3b2 已闭合 rollback 的两个进程崩溃窗口，并提供显式、有界、只读的 pending transaction discovery；它不是启动时自动恢复。下一步仍需解决目标内容与路径组件的 OS 级 CAS/dir-handle-relative 防 TOCTOU（包括并发 symlink/junction swap）、断电级 directory fsync 与 Windows reparse/junction fixture。在这些条件满足前不开放 Gate 6 Apply。
+真实入口的第一个过渡切片已经开放：只替换一个已存在的 Codex project Skill，具备真实 Diff、显式审批、外置快照、写后验证和 guarded rollback。下一步是把它接入本地 Vue 工作流，并补齐 interrupted-process recovery、OS 级 CAS/dir-handle-relative 防 TOCTOU、断电级 directory fsync 与 Windows reparse/junction fixture；在这些条件满足前 Gate 6 仍只算部分开放。

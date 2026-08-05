@@ -50,6 +50,7 @@ test_mains=(
   dev.agentconfig.workbench.CodexSkillDraftCliTests
   dev.agentconfig.workbench.FixtureSkillTransactionTests
   dev.agentconfig.workbench.FixturePendingScanTests
+  dev.agentconfig.workbench.ControlledSkillChangeCliTests
 )
 
 for test_main in "${test_mains[@]}"; do

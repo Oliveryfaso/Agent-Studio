@@ -3,7 +3,7 @@
 - 文档版本：1.3
 - 日期：2026-08-05
 - 项目类型：生产型 AI 应用闭环 + Agent 配置治理 + 评测与可观测性
-- 项目阶段：实验室原型 / Codex-first Inspect 与 Skill S0–S2 已可运行，S3 fixture apply/rollback 进程恢复与 pending discovery 完成
+- 项目阶段：实验室原型 / Codex-first Inspect 与 Skill S0–S2 已可运行，existing-Skill 真实入口部分开放
 - 当前执行范围：`Inspect → Draft → Diff/Export → Simple Apply/Rollback`；其他宿主、通用转换、GitHub、Router 与历史演化暂时冻结
 
 ## 1. 一句话目标
@@ -23,7 +23,7 @@ Codex-first
 
 - 当前顺序支持 Codex Project Skill、`AGENTS.md`、Agent TOML、Rule/Policy；先完成 Skill 全闭环，再扩展后三类。
 - `inspect codex` 已完成第一刀：人类可读、零写入、只显示逻辑路径和结论，不显示正文、hash 或物理路径。
-- S0 Skill Inventory 与安全引用图、S1 persistence triage / `SkillBlueprint v1`、S2 确定性内存 `SKILL.md` / 最终字节静态校验 / stdout Export 均已完成。S3 已在 marker 限定的临时 fixture 中验证 apply/rollback 进程恢复与显式 pending discovery；没有 CLI，拒绝普通项目，不等于 Gate 6。
+- S0 Skill Inventory 与安全引用图、S1 persistence triage / `SkillBlueprint v1`、S2 确定性内存 `SKILL.md` / 最终字节静态校验 / stdout Export 均已完成。S3 fixture 已验证 apply/rollback 进程恢复与显式 pending discovery；另有过渡 CLI 对普通项目开放 existing Codex Skill 的单文件替换和回退，Gate 6 因恢复与平台限制仍只算部分开放。
 - Claude Code、主流 vibe-coding 宿主、双向转换、GitHub、Skill Router、评测和历史改进仍是长期目标，不取消，但不与核心闭环并行开发。
 - 后文的多宿主平台、研究优化和完整事务设计是长期参考；若与本节的近期顺序冲突，以本节为准。
 
@@ -33,7 +33,7 @@ Codex-first
 | Codex Skill inventory | Active / S0 完成 |
 | Codex Skill triage / Blueprint | Active / S1 完成 |
 | Codex Skill candidate、validation、diff/export | Active / S2 完成 |
-| 单文件目标审阅、Simple Apply/Rollback | Active / fixture apply+rollback 进程恢复与显式 pending discovery 完成 |
+| 单文件目标审阅、Simple Apply/Rollback | Active / existing Codex Skill 真实 CLI 已接通 |
 | Claude 完整闭环 | Queued after Codex validation |
 | 通用 conversion、Git/GitHub、Wave hosts | Frozen |
 | Router、gap、history/evolution、hooks | Research backlog |
@@ -882,16 +882,17 @@ redaction profile + consent scope + retention class
 - Windsurf / Devin Desktop：首选 `.devin/rules`、兼容 `.windsurf/rules`、仅旧 Cascade 使用的 workflows、skills、`AGENTS.md` 与 product/surface 迁移。
 - 所有 Wave 1 adapter 通过 conformance suite 前保持只读；Quick Convert 支持选择这些目标但不允许 Apply。
 
-### Phase 5：事务与恢复（仅 fixture）
+### Phase 5：事务与恢复（fixture 完成，真实过渡入口复用）
 
 - vault、journal、snapshot、atomic replace、故障注入与启动恢复。
 - byte-identical rollback 与并发阻断达到门槛。
 
-### Phase 6：真实工作区 Apply
+### Phase 6：真实工作区 Apply（过渡切片进行中）
 
 - 原生编辑和转换结果统一经过逐能力授权、明确批准、真实配置应用与 post-validate。
 - 先开放 Codex/Claude；Wave 1 逐个通过 native validator、round-trip 与权限差异 gate 后再开放，不捆绑发布。
 - Recovery Center 与脱敏审计。
+- 当前只开放 Codex project 中一个已存在 Skill 的替换：显式 workspace、真实完整 Diff、approval token、外置可信 state root、原始字节快照、原子替换、post-validate 与 guarded rollback。创建/多文件、自动恢复、跨进程 CAS 与完整 Windows reparse 仍关闭。
 
 ### Phase 7：Wave 2 preview、可选 AI 和 Prompt Export
 
@@ -909,12 +910,12 @@ redaction profile + consent scope + retention class
 - S0：Codex Skill package 只读 inventory 与引用图。
 - S1：自然语言/向导 → persistence classification → `SkillBlueprint v1`，preview-only。
 - S2：确定性模板、内存候选、最终字节静态校验与 stdout Diff/export。已完成。
-- S3：fixture-only 单文件事务、apply/rollback 进程崩溃恢复与显式 pending discovery 已完成；断电/并发证明和真实项目授权待做。
+- S3：fixture 单文件事务恢复与 pending discovery 已完成；真实 existing-Skill 过渡入口已接通 preview/apply/rollback。
 - S4：同一闭环扩展到 AGENTS、Agent TOML 与 Rule/Policy。
 - S5：Claude 同等闭环。
 - S6：依据用户证据解冻其他宿主、Router、eval、history 和跨宿主能力。
 
-当前状态：Codex `inspect` 与 Skill S0–S2 已完成最小只读纵向切片。S3 内部 API 只在带精确 marker 的临时 workspace 与独立 state root 中工作；manifest v3 使用 `COMMIT_INTENT` / `ROLLBACK_INTENT`、确定性 stage 与幂等 `recoverTransaction` 闭合 apply/rollback 的进程崩溃窗口，并以显式双预算扫描发现 pending transaction。扫描不自动恢复。没有普通用户入口，也不会接受一般项目目录。3+3 仍是静态契约，不是已运行的模型路由 eval。
+当前状态：Codex `inspect` 与 Skill S0–S2 已完成最小纵向切片。S3 fixture API 使用 manifest v3 闭合进程崩溃窗口并支持显式 pending discovery；在它之上新增的真实过渡入口可接受普通用户明确授权的项目，但只替换一个已存在的 Codex Skill。入口重新生成候选与 plan、要求独立 approval token、使用 workspace 外可信 state root，并提供 transaction rollback。它暂不承诺进程中断后的自动恢复、断电持久性或跨进程条件替换。3+3 仍是静态契约，不是已运行的模型路由 eval。
 
 ### 当前 Gate 状态（2026-08-05）
 
@@ -925,7 +926,7 @@ redaction profile + consent scope + retention class
 | Gate 3 | Codex/Claude 项目语义读取与 IR | 实验性纵向切片完成 | 用户/managed 层、完整配置合并、外部批准、lossless parser/native validation；整体 adapter 仍为 Inventory |
 | Gate 4 | 双向转换预览 | canonical Codex root wrapper 纵向切片已验证；能力冻结 | 只有核心闭环验证后才复审通用/反向 renderer |
 | Gate 5 | ChangeSet、快照、事务与恢复 | fixture apply/rollback 进程恢复 + 显式 pending discovery 完成 | 断电持久性、OS 级 CAS/dir-handle-relative 防 TOCTOU、Windows reparse/junction、长期 vault；尚无自动启动恢复 |
-| Gate 6 | 真实工作区 Apply | 未开始 | Gate 5 剩余项、明确目录授权、用户审批入口与真实工作区 post-validate |
+| Gate 6 | 真实工作区 Apply | 部分开放：existing Codex Skill 单文件 CLI | Vue 授权/审阅入口、自动恢复、创建/多文件、跨进程 CAS、Windows reparse 与分发加固 |
 | Gate 7 | UI、Wave 1、GitHub/分发 | GitHub 发布基线完成，其余未开始 | Vue 工作流、其他宿主语义、PR 导出、安装包、签名/SBOM |
 
 ## 18. MVP 发布门槛

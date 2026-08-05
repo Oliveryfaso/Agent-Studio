@@ -255,12 +255,12 @@ Skill lane 现在按一个用户闭环顺序推进，不再与平台 Gate 并行
 | S0 Inventory | Codex Skill package 只读发现、引用图、重复名、可执行风险 | 无 |
 | S1 Blueprint Preview | 自然语言/向导 → persistence classification → `SkillBlueprint v1` | 无 |
 | S2 Validated Draft | 确定性单文件模板、最终字节静态校验、stdout content/synthetic-diff/prompt export | 无；已完成 |
-| S3 Single-file Apply/Rollback | fixture 事务以 manifest v3 的 COMMIT_INTENT / ROLLBACK_INTENT + recoverTransaction 闭合 apply/rollback 进程崩溃窗口，并支持显式有界 pending discovery | fixture 内部 API；真实项目仍不可用 |
+| S3 Single-file Apply/Rollback | fixture 事务闭合进程崩溃窗口；过渡 CLI 支持一个已存在 Codex Skill 的 preview/apply/rollback | 真实入口尚无自动中断恢复、创建/多文件与跨进程 CAS |
 | S4 Native asset expansion | 将同一闭环扩展到 AGENTS、Agent TOML 和 Rule/Policy | 逐类型晋级 |
 | S5 Claude lifecycle | Claude Skill 与 instruction 的同等闭环 | 逐类型晋级 |
 | S6 Advanced lifecycle | 其他宿主、Router、eval、history improvement 与跨宿主转换 | 依据用户证据解冻 |
 
-当前 `inspect` 用户入口与 Skill S0–S2 已完成最小只读闭环。S3 用没有 CLI 的内部 API，在两个带精确 marker、彼此分离的临时 fixture root 中验证单文件事务。manifest v3 在 move/delete 前持久化 `COMMIT_INTENT` 或 `ROLLBACK_INTENT`，以确定性 stage 和显式、幂等 `recoverTransaction` 完成操作或只补记已发生的结果；恢复不覆盖 identity/hash/权限不匹配的当前目标。`scanPendingTransactions` 仅作有界、只读 discovery，不自动恢复。普通项目、断电级目录持久性、OS 级 CAS/防 TOCTOU 和完整 Windows reparse 防护尚未开放。
+当前 `inspect` 用户入口与 Skill S0–S2 已完成最小闭环。S3 fixture API 用 manifest v3、确定性 stage 和显式 recover/scan 验证单文件事务。真实过渡 CLI 进一步允许用户对普通项目中的一个已存在 Codex Skill 执行真实 Diff、批准替换和 guarded rollback；其 state root 必须在 workspace 外且受本地用户信任。真实入口尚未接入 fixture 的自动 interrupted-process recovery，也不承诺断电级目录持久性、OS 级 CAS/防 TOCTOU 或完整 Windows reparse 防护。
 
 ## 12. 最小产品切片
 

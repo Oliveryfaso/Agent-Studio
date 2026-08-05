@@ -30,6 +30,10 @@ import dev.agentconfig.workbench.skill.CodexSkillInventory;
 import dev.agentconfig.workbench.skill.CodexSkillInventoryService;
 import dev.agentconfig.workbench.skilldraft.CodexSkillDraftPreview;
 import dev.agentconfig.workbench.skilldraft.CodexSkillDraftService;
+import dev.agentconfig.workbench.transaction.ControlledExistingSkillService;
+import dev.agentconfig.workbench.transaction.ControlledSkillApplyReceipt;
+import dev.agentconfig.workbench.transaction.ControlledSkillRollbackReceipt;
+import dev.agentconfig.workbench.transaction.PreparedControlledSkillChange;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.PrintWriter;
@@ -75,7 +79,94 @@ public final class Cli {
         if (args.length > 0 && "skill-draft-preview".equals(args[0])) {
             return runSkillDraftPreview(args, input, output, error);
         }
+        if (args.length > 0 && "skill-change-preview".equals(args[0])) {
+            return runSkillChangePreview(args, input, output, error);
+        }
+        if (args.length > 0 && "skill-change-apply".equals(args[0])) {
+            return runSkillChangeApply(args, input, output, error);
+        }
+        if (args.length > 0 && "skill-change-rollback".equals(args[0])) {
+            return runSkillChangeRollback(args, output, error);
+        }
         return runScan(args, output, error);
+    }
+
+    private int runSkillChangePreview(String[] args, InputStream input,
+            PrintWriter output, PrintWriter error) {
+        boolean metadata = args.length == 3;
+        boolean diff = args.length == 5 && "--export".equals(args[3])
+                && "diff".equals(args[4]);
+        if ((!metadata && !diff) || !"codex".equals(args[1])) {
+            usage(error);
+            return 2;
+        }
+        try {
+            CodexSkillDraftPreview draft = new CodexSkillDraftService()
+                    .draft(new BlueprintPreviewService().preview(input));
+            PreparedControlledSkillChange prepared = new ControlledExistingSkillService()
+                    .prepare(Path.of(args[2]), draft);
+            if (diff && prepared.plan().applyEligible()) {
+                ControlledSkillChangeWriter.writeDiff(prepared.plan(),
+                        prepared.exactReplacementDiff().orElseThrow(), output);
+            } else {
+                ControlledSkillChangeWriter.writePlan(prepared.plan(), output);
+            }
+            return prepared.plan().applyEligible()
+                    || prepared.plan().status()
+                            == dev.agentconfig.workbench.transaction.ControlledSkillChangePlan.Status.NO_CHANGE
+                    ? 0 : 3;
+        } catch (IllegalArgumentException exception) {
+            error.println("Skill change preview rejected: " + exception.getMessage());
+            return 2;
+        } catch (IOException exception) {
+            error.println("Skill change preview failed: " + exception.getClass().getSimpleName());
+            return 2;
+        }
+    }
+
+    private int runSkillChangeApply(String[] args, InputStream input,
+            PrintWriter output, PrintWriter error) {
+        if (args.length != 6 || !"codex".equals(args[1])
+                || !"--approve".equals(args[4])) {
+            usage(error);
+            return 2;
+        }
+        try {
+            CodexSkillDraftPreview draft = new CodexSkillDraftService()
+                    .draft(new BlueprintPreviewService().preview(input));
+            ControlledSkillApplyReceipt receipt = new ControlledExistingSkillService().apply(
+                    Path.of(args[2]), Path.of(args[3]), draft, args[5]);
+            ControlledSkillChangeWriter.writeApplyReceipt(receipt, output);
+            return receipt.status() == ControlledSkillApplyReceipt.Status.VERIFIED_APPLIED ? 0 : 3;
+        } catch (IllegalArgumentException exception) {
+            error.println("Skill change apply rejected: " + exception.getMessage());
+            return 2;
+        } catch (IOException exception) {
+            error.println("Skill change apply failed: " + exception.getClass().getSimpleName());
+            return 2;
+        }
+    }
+
+    private int runSkillChangeRollback(String[] args,
+            PrintWriter output, PrintWriter error) {
+        if (args.length != 5 || !"codex".equals(args[1])) {
+            usage(error);
+            return 2;
+        }
+        try {
+            ControlledSkillRollbackReceipt receipt = new ControlledExistingSkillService()
+                    .rollback(Path.of(args[2]), Path.of(args[3]), args[4]);
+            ControlledSkillChangeWriter.writeRollbackReceipt(receipt, output);
+            return receipt.status() == ControlledSkillRollbackReceipt.Status.ROLLED_BACK
+                    || receipt.status()
+                            == ControlledSkillRollbackReceipt.Status.ALREADY_ROLLED_BACK ? 0 : 3;
+        } catch (IllegalArgumentException exception) {
+            error.println("Skill change rollback rejected: " + exception.getMessage());
+            return 2;
+        } catch (IOException exception) {
+            error.println("Skill change rollback failed: " + exception.getClass().getSimpleName());
+            return 2;
+        }
     }
 
     private int runSkillDraftPreview(
@@ -380,9 +471,18 @@ public final class Cli {
                 + " < bounded-guided-request.intent");
         error.println("   or: agent-config-workbench skill-draft-preview codex"
                 + " [--export <content|diff|prompt>] < bounded-guided-request.intent");
+        error.println("   or: agent-config-workbench skill-change-preview codex"
+                + " <authorized-workspace> [--export diff] < bounded-guided-request.intent");
+        error.println("   or: agent-config-workbench skill-change-apply codex"
+                + " <authorized-workspace> <state-directory> --approve <token>"
+                + " < bounded-guided-request.intent");
+        error.println("   or: agent-config-workbench skill-change-rollback codex"
+                + " <authorized-workspace> <state-directory> <transaction-id>");
         error.println("Workspace inspection commands never write to or execute discovered content.");
         error.println("Blueprint preview may echo bounded user form fields, but reads no workspace content.");
         error.println("Skill draft exports are stdout-only and never inspect or write a target workspace.");
+        error.println("Controlled Skill change commands only replace one existing project Skill;");
+        error.println("they require an external state directory and do not provide crash recovery.");
         error.println("Git administrative metadata is not inspected unless --git-metadata is supplied.");
     }
 }

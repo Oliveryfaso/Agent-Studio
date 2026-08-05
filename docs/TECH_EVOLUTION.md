@@ -347,3 +347,10 @@
 - 新增 `scanPendingTransactions` 只读 API：只扫描 state root 直接子项，使用 canonical v4 UUID、稳定排序、cursor、direct-entry 与 manifest 双预算，返回 content-free pending metadata；它不在启动时自动执行，也不修改或恢复任何事务。
 - subagent 审查推动修复 stage ownership、intent 写入结果不确定时的保留策略、intent 后 stage identity 复核和 receipt target/state write 分离。该切片仍不保证断电级 directory fsync、OS 级 CAS/dir-handle-relative 操作或 Windows junction/reparse，Gate 5 仍为部分完成，Gate 6 保持关闭。
 - 新增 7 项 rollback WAL 与 5 项 pending discovery fixture；全量本地测试从 241 增至 253，版本化 conformance 保持 27 项。
+
+## 2026-08-05：启动 Gate 6 的 existing-Skill 真实入口
+
+- 新增 `skill-change-preview/apply/rollback` 与 `scripts/run-skill-change.sh`，把 S1/S2 的确定性候选接到用户明确指定的普通 workspace。当前只替换一个已存在、严格 UTF-8/LF 的 Codex project `SKILL.md`，不创建目标或父目录。
+- Preview 默认 metadata-only，显式 `--diff` 才输出真实完整替换 Diff；approval token 绑定 workspace、logical path、candidate、preimage identity/hash/权限与 Diff。Apply 使用 workspace 外的可信 state root 保存原始字节与 manifest，写后验证；rollback 同时校验 applied identity、hash 与权限。
+- subagent 审查修复了预占 stage 被误删、目标 move 后回执误报未写、apply intent 无恢复路径、rollback 终态写失败无法收敛，以及同字节外部替换可能被覆盖的问题。回执分别记录 target/state write 与 recoveryRequired。
+- 新增 9 项真实临时 workspace CLI fixture，全量本地测试从 253 增至 262，conformance 保持 27 项。该入口是产品原型，不含自动进程中断恢复、跨进程 OS CAS、断电持久性和完整 Windows reparse 证明，因此 Gate 6 只标记为部分开放。

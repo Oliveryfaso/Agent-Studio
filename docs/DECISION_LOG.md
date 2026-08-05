@@ -297,6 +297,15 @@
 - Discovery：新增显式、只读的 `scanPendingTransactions`，只查看 state root 直接子项，严格接受 canonical v4 transaction UUID，使用 direct-entry 与 manifest 双预算、稳定排序和 cursor；只报告 PREPARED、COMMIT_INTENT、ROLLBACK_INTENT 及恢复方向，不输出候选/快照内容，不遍历子树，也不自动调用恢复。
 - 审计与边界：rollback receipt 分开记录本次确认发生的 target/state write。同名预存 rollback stage 不归本事务所有且不得被清理；intent 结果不确定时保守保留 stage；move 前再次校验 stage identity。fixture manifest 不提供跨 schema 迁移承诺。本切片仍只证明 service process-crash reconciliation，不证明 power-loss durability、OS 级 conditional replace/delete、父路径 CAS 或 Windows junction/reparse 安全，因此 Gate 6 保持关闭。
 
+## ADR-035：Gate 6 先开放 existing Codex Skill 的受控真实入口
+
+- 日期：2026-08-05
+- 状态：接受（过渡切片）
+- 决定：公开 `preview → approve/apply → transaction rollback` CLI，但只允许替换用户明确授权 workspace 中一个已存在、严格 UTF-8/LF 且有结尾换行的 `.agents/skills/<name>/SKILL.md`。不会创建目标、父目录、supporting files 或多文件 ChangeSet。
+- 授权与审计：Preview 的真实 Diff 必须显式导出；approval token 绑定 root、logical path、candidate、preimage identity/hash/权限与 Diff，但不是身份凭证。Apply 要求 workspace 外的可信本地 state root，保存 byte-exact snapshot 与状态 manifest。回执分别报告 target/state write、rollback availability 与 recoveryRequired，任何 move 后故障不得伪装成零写入。
+- 最低保护：拒绝链接/reparse-like 路径、stale preimage、非法 state 拓扑和非 canonical 目标文本；同名预存 stage 不归事务所有且不得清理；正常 APPLIED rollback 绑定 apply 后 identity；manifest 仍处于 apply intent 且目标已是候选时允许显式恢复性 rollback。
+- 限制：真实入口尚未复用 fixture v3 的完整 crash-recovery scanner，不提供跨进程锁/OS CAS、dir-handle-relative 操作、directory fsync、长期 vault 或完整 Windows junction 证明。它是 Gate 6 的可用性验证，不是发布级文件事务声明。
+
 ## 待决问题
 
 - [ ] 为正式工程选择 Java 构建工具与最小模块骨架；当前纯 JDK 脚本仅服务 Phase 1 spike。
