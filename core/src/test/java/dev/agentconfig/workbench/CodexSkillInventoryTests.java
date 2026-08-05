@@ -39,6 +39,14 @@ public final class CodexSkillInventoryTests {
         run("agents directory symlink is blocked and CLI returns partial",
                 this::agentsDirectorySymlink);
         run("supporting symlink makes inventory partial", this::supportingSymlink);
+        run("safe inline references form a deterministic content-free graph",
+                this::safeReferenceGraph);
+        run("missing and unsafe references invalidate without leaking destinations",
+                this::invalidReferences);
+        run("code examples external URLs and anchors are not local references",
+                this::ignoredReferenceForms);
+        run("reference budget returns a deterministic partial prefix",
+                this::referenceBudget);
         run("supporting entry budget stops with a partial result", this::supportingEntryBudget);
         run("inventory performs zero workspace writes", this::zeroWorkspaceWrites);
         run("CLI output is content-free and partial-aware", this::cliContract);
@@ -161,7 +169,6 @@ public final class CodexSkillInventoryTests {
             }
 
             CodexSkillInventory inventory = inspect(root);
-
             equal(CodexSkillInventory.Status.PARTIAL, inventory.status(), "status");
             check(inventory.packages().isEmpty(), "symlink target became a package");
             check(hasFinding(inventory, CodexSkillInventory.FindingCode.SKILL_FILE_IS_SYMLINK),
@@ -172,7 +179,8 @@ public final class CodexSkillInventoryTests {
     private void supportingSymlink() throws Exception {
         withTempDirectory(base -> {
             Path root = Files.createDirectory(base.resolve("workspace"));
-            writeSkill(root, "safe", "safe", "Safe skill", "Body\n");
+            writeSkill(root, "safe", "safe", "Safe skill",
+                    "[private](references/private.md) [other](references/other.md)\n");
             Path outside = Files.writeString(base.resolve("private.md"), "private-support-content");
             Path link = root.resolve(".agents/skills/safe/references/private.md");
             Files.createDirectories(link.getParent());
@@ -182,13 +190,176 @@ public final class CodexSkillInventoryTests {
             }
 
             CodexSkillInventory inventory = inspect(root);
-
             equal(CodexSkillInventory.Status.PARTIAL, inventory.status(), "status");
             equal(CodexSkillInventory.PackageState.PARTIAL,
                     inventory.packages().getFirst().state(), "package state");
             check(inventory.packages().getFirst().risks()
                             .contains(CodexSkillInventory.Risk.SYMLINK_SUPPORT_PATH),
                     "support link risk");
+            equal(2, inventory.references().size(), "unknown reference count");
+            check(inventory.references().stream().allMatch(reference ->
+                            reference.resolution()
+                                    == CodexSkillInventory.ReferenceResolution.UNKNOWN),
+                    "incomplete support enumeration must not claim missing");
+            check(inventory.references().stream().allMatch(reference ->
+                            reference.targetLogicalPath().isEmpty()),
+                    "unknown targets must be redacted");
+        });
+    }
+
+    private void safeReferenceGraph() throws Exception {
+        withTempDirectory(root -> {
+            writeSkill(root, "review", "review", "Review code",
+                    "[checklist](references/checklist.md?mode=fast#before-review)\n"
+                            + "![diagram](<assets/review flow.png>)\n"
+                            + "[duplicate](references/checklist.md#other)\n");
+            write(root, ".agents/skills/review/references/checklist.md", "support-secret-4412");
+            write(root, ".agents/skills/review/assets/review flow.png", "image-secret-8841");
+
+            CodexSkillInventory inventory = inspect(root);
+
+            equal(CodexSkillInventory.Status.COMPLETE, inventory.status(), "status");
+            equal(CodexSkillInventory.PackageState.MINIMAL_METADATA_VALID,
+                    inventory.packages().getFirst().state(), "package state");
+            equal(3, inventory.references().size(), "reference count");
+            equal(List.of(
+                            ".agents/skills/review/assets/review flow.png",
+                            ".agents/skills/review/references/checklist.md",
+                            ".agents/skills/review/references/checklist.md"),
+                    inventory.references().stream()
+                            .map(CodexSkillInventory.Reference::targetLogicalPath).toList(),
+                    "stable target ordering");
+            check(inventory.references().stream().allMatch(reference ->
+                            reference.resolution()
+                                    == CodexSkillInventory.ReferenceResolution.RESOLVED),
+                    "resolved reference");
+            equal(CodexSkillInventory.ReferenceKind.IMAGE,
+                    inventory.references().getFirst().kind(), "image kind");
+            try {
+                new CodexSkillInventory.Reference(
+                        ".agents/skills/review/SKILL.md",
+                        ".agents/skills/other/private.md",
+                        1,
+                        1,
+                        CodexSkillInventory.ReferenceKind.LINK,
+                        CodexSkillInventory.ReferenceResolution.RESOLVED);
+                throw new AssertionError("cross-package reference was accepted");
+            } catch (IllegalArgumentException expected) {
+                // Domain contract rejects edges that the service must never produce.
+            }
+        });
+    }
+
+    private void invalidReferences() throws Exception {
+        withTempDirectory(root -> {
+            String missingLabel = "missing-label-secret-9101";
+            String unsafeTarget = "../../outside-secret-9102.md";
+            String missingTarget = "references/missing-target-secret-9103.md";
+            String secondMissingTarget = "references/missing-target-secret-9104.md";
+            String absoluteTarget = "/private/absolute-secret-9105.md";
+            String uncTarget = "//server/share-secret-9106.md";
+            String customSchemeTarget = "skill+private:secret-9107";
+            writeSkill(root, "audit", "audit", "Audit configuration",
+                    "[" + missingLabel + "](" + missingTarget + ") "
+                            + "[second](" + secondMissingTarget + ")\n"
+                            + "[escape](" + unsafeTarget + ")\n"
+                            + "[windows](C:\\private\\secret.md)\n"
+                            + "[file](file:///private/secret.md)\n"
+                            + "[nonportable](references/a*bad.md)\n"
+                            + "[absolute](" + absoluteTarget + ")\n"
+                            + "[unc](" + uncTarget + ")\n"
+                            + "[scheme](" + customSchemeTarget + ")\n");
+
+            CodexSkillInventory inventory = inspect(root);
+            Invocation invocation = invoke("skill-inventory", "codex", root.toString());
+
+            equal(CodexSkillInventory.Status.COMPLETE, inventory.status(), "scan status");
+            equal(3, invocation.exitCode(), "blocking unsafe reference exit");
+            equal(CodexSkillInventory.PackageState.INVALID,
+                    inventory.packages().getFirst().state(), "package state");
+            check(hasFinding(inventory, CodexSkillInventory.FindingCode.MISSING_REFERENCE_TARGET),
+                    "missing reference finding");
+            check(hasFinding(inventory, CodexSkillInventory.FindingCode.UNSAFE_LOCAL_REFERENCE),
+                    "unsafe reference finding");
+            equal(2, inventory.references().size(), "redacted unresolved edge count");
+            check(inventory.references().stream().allMatch(reference ->
+                            reference.resolution()
+                                    == CodexSkillInventory.ReferenceResolution.MISSING),
+                    "missing resolution");
+            check(inventory.references().stream().allMatch(reference ->
+                            reference.targetLogicalPath().isEmpty()),
+                    "unresolved target path was retained");
+            check(inventory.references().get(0).column() != inventory.references().get(1).column(),
+                    "same-line unresolved references lost occurrence identity");
+            check(!invocation.stdout().contains(missingLabel), "link label leaked");
+            check(!invocation.stdout().contains(missingTarget), "missing destination leaked");
+            check(!invocation.stdout().contains(secondMissingTarget),
+                    "second missing destination leaked");
+            check(invocation.stdout().contains("\"column\":"), "column missing from JSON");
+            check(!invocation.stdout().contains(unsafeTarget), "unsafe destination leaked");
+            check(!invocation.stdout().contains(absoluteTarget), "absolute destination leaked");
+            check(!invocation.stdout().contains(uncTarget), "UNC destination leaked");
+            check(!invocation.stdout().contains(customSchemeTarget), "URI destination leaked");
+            check(!invocation.stdout().contains("C:\\\\private"), "Windows destination leaked");
+        });
+    }
+
+    private void ignoredReferenceForms() throws Exception {
+        withTempDirectory(root -> {
+            writeSkill(root, "docs", "docs", "Document workflows",
+                    "[web](https://example.com/secret-path) and [mail](mailto:user@example.com)\n"
+                            + "[section](#local-section)\n"
+                            + "`[inline](references/not-real.md)`\n"
+                            + "\\[escaped](references/not-real.md)\n"
+                            + "<!-- [comment](references/not-real.md) -->\n"
+                            + "<!--\n[multiline-comment](references/not-real.md)\n-->\n"
+                            + "<!--\n```not-a-fence\n-->\n"
+                            + "`<!--`\n"
+                            + "```markdown\n<!--\n```not-a-close\n"
+                            + "[fenced](../../outside.md)\n```\n"
+                            + "[real](references/real.md)\n");
+            write(root, ".agents/skills/docs/references/real.md", "real support");
+
+            CodexSkillInventory inventory = inspect(root);
+
+            equal(CodexSkillInventory.Status.COMPLETE, inventory.status(), "status");
+            equal(1, inventory.references().size(), "ignored forms became graph edges");
+            equal(".agents/skills/docs/references/real.md",
+                    inventory.references().getFirst().targetLogicalPath(), "real reference");
+            check(!hasFinding(inventory, CodexSkillInventory.FindingCode.MISSING_REFERENCE_TARGET),
+                    "ignored form became missing");
+            check(!hasFinding(inventory, CodexSkillInventory.FindingCode.UNSAFE_LOCAL_REFERENCE),
+                    "fenced example became unsafe");
+        });
+    }
+
+    private void referenceBudget() throws Exception {
+        withTempDirectory(root -> {
+            StringBuilder body = new StringBuilder();
+            body.append("[long](references/")
+                    .append("a".repeat(1025))
+                    .append("[nested](references/nested.md))\n");
+            for (int index = 0; index < 129; index++) {
+                body.append("[item](references/item-")
+                        .append("%03d".formatted(index)).append(".md)\n");
+            }
+            writeSkill(root, "bounded", "bounded", "Bounded references", body.toString());
+            for (int index = 0; index < 129; index++) {
+                write(root, ".agents/skills/bounded/references/item-%03d.md".formatted(index), "x");
+            }
+            write(root, ".agents/skills/bounded/references/nested.md", "x");
+
+            CodexSkillInventory inventory = inspect(root);
+
+            equal(CodexSkillInventory.Status.PARTIAL, inventory.status(), "status");
+            equal(128, inventory.references().size(), "bounded reference prefix");
+            check(inventory.references().stream().noneMatch(reference ->
+                            reference.targetLogicalPath().endsWith("/nested.md")),
+                    "nested link text inside overlong destination was reparsed");
+            check(hasFinding(inventory, CodexSkillInventory.FindingCode.REFERENCE_LIMIT_REACHED),
+                    "reference limit finding");
+            equal(CodexSkillInventory.PackageState.PARTIAL,
+                    inventory.packages().getFirst().state(), "package state");
         });
     }
 
@@ -221,16 +392,18 @@ public final class CodexSkillInventoryTests {
             writeSkill(root, "review", "review", "Review code", "Body\n");
             Map<String, Fingerprint> before = fingerprint(root);
 
-            inspect(root);
-            inspect(root);
+            CodexSkillInventory first = inspect(root);
+            CodexSkillInventory second = inspect(root);
 
             equal(before, fingerprint(root), "workspace fingerprint");
+            equal(first, second, "repeatable inventory");
         });
     }
 
     private void supportingEntryBudget() throws Exception {
         withTempDirectory(root -> {
-            writeSkill(root, "large", "large", "Large package", "Body\n");
+            writeSkill(root, "large", "large", "Large package",
+                    "[late](references/item-256.md)\n");
             for (int index = 0; index < 257; index++) {
                 write(root, ".agents/skills/large/references/item-%03d.md".formatted(index), "x");
             }
@@ -243,6 +416,11 @@ public final class CodexSkillInventoryTests {
                     "entry limit finding");
             equal(CodexSkillInventory.PackageState.PARTIAL,
                     inventory.packages().getFirst().state(), "package state");
+            equal(1, inventory.references().size(), "unknown edge count");
+            equal(CodexSkillInventory.ReferenceResolution.UNKNOWN,
+                    inventory.references().getFirst().resolution(), "unknown resolution");
+            check(!hasFinding(inventory, CodexSkillInventory.FindingCode.MISSING_REFERENCE_TARGET),
+                    "partial enumeration claimed missing");
         });
     }
 
@@ -254,7 +432,11 @@ public final class CodexSkillInventoryTests {
             Invocation complete = invoke("skill-inventory", "codex", root.toString());
 
             equal(0, complete.exitCode(), "complete exit");
-            check(complete.stdout().contains("\"schemaVersion\": 1"), "schema missing");
+            check(complete.stdout().contains("\"schemaVersion\": 2"), "schema missing");
+            check(complete.stdout().contains(
+                            "\"referenceProfileId\": \"codex-skill-inline-reference-v1\""),
+                    "reference profile missing");
+            check(complete.stdout().contains("\"references\": ["), "reference graph missing");
             check(complete.stdout().contains("\"contentIncluded\": false"),
                     "content contract missing");
             check(complete.stdout().contains("\"writesPerformed\": false"),

@@ -78,7 +78,9 @@ public final class Cli {
         try {
             CodexSkillInventory inventory = new CodexSkillInventoryService().inspect(root);
             SkillInventoryJsonWriter.write(inventory, output);
-            return inventory.status() == CodexSkillInventory.Status.COMPLETE ? 0 : 3;
+            boolean blocking = inventory.findings().stream().anyMatch(finding ->
+                    finding.severity() == CodexSkillInventory.Severity.BLOCKING);
+            return inventory.status() == CodexSkillInventory.Status.COMPLETE && !blocking ? 0 : 3;
         } catch (IOException exception) {
             error.println("Skill inventory failed before a report could be produced: "
                     + exception.getClass().getSimpleName());

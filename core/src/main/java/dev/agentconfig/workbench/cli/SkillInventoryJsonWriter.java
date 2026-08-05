@@ -4,19 +4,22 @@ import dev.agentconfig.workbench.skill.CodexSkillInventory;
 import java.io.PrintWriter;
 import java.util.Iterator;
 
-/** Serializes Skill inventory v1 without SKILL.md or supporting-file content. */
+/** Serializes Skill inventory v2 without SKILL.md or supporting-file content. */
 final class SkillInventoryJsonWriter {
     private SkillInventoryJsonWriter() {}
 
     static void write(CodexSkillInventory inventory, PrintWriter output) {
         output.println("{");
         output.printf("  \"schemaVersion\": %d,%n", inventory.schemaVersion());
+        output.printf("  \"referenceProfileId\": %s,%n",
+                json(inventory.referenceProfileId()));
         output.println("  \"command\": \"skill-inventory\",");
         output.println("  \"hostId\": \"codex\",");
         output.printf("  \"status\": %s,%n", json(inventory.status().name()));
         output.printf("  \"contentIncluded\": %s,%n", inventory.contentIncluded());
         output.printf("  \"writesPerformed\": %s,%n", inventory.writesPerformed());
         writePackages(inventory.packages().iterator(), output);
+        writeReferences(inventory.references().iterator(), output);
         writeFindings(inventory.findings().iterator(), output);
         output.println("}");
         output.flush();
@@ -50,6 +53,27 @@ final class SkillInventoryJsonWriter {
             output.println("],");
             output.printf("      \"state\": %s%n", json(skillPackage.state().name()));
             output.printf("    }%s%n", packages.hasNext() ? "," : "");
+        }
+        output.println("  ],");
+    }
+
+    private static void writeReferences(
+            Iterator<CodexSkillInventory.Reference> references, PrintWriter output) {
+        output.println("  \"references\": [");
+        while (references.hasNext()) {
+            CodexSkillInventory.Reference reference = references.next();
+            output.println("    {");
+            output.printf("      \"sourceLogicalPath\": %s,%n",
+                    json(reference.sourceLogicalPath()));
+            output.printf("      \"targetLogicalPath\": %s,%n",
+                    reference.targetLogicalPath().isEmpty()
+                            ? "null" : json(reference.targetLogicalPath()));
+            output.printf("      \"line\": %d,%n", reference.line());
+            output.printf("      \"column\": %d,%n", reference.column());
+            output.printf("      \"kind\": %s,%n", json(reference.kind().name()));
+            output.printf("      \"resolution\": %s%n",
+                    json(reference.resolution().name()));
+            output.printf("    }%s%n", references.hasNext() ? "," : "");
         }
         output.println("  ],");
     }

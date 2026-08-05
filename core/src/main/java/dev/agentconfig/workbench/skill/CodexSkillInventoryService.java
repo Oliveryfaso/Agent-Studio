@@ -29,10 +29,11 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeSet;
 
 /**
- * Reads only project-local {@code .agents/skills/<name>/SKILL.md} metadata. Supporting files are
- * enumerated as inert paths; they are never opened or executed.
+ * Reads bounded project-local {@code .agents/skills/<name>/SKILL.md} metadata and body references.
+ * Supporting files are enumerated as inert paths; they are never opened or executed.
  */
 public final class CodexSkillInventoryService {
     private static final long MAX_SKILL_BYTES = 128 * 1024;
@@ -51,47 +52,48 @@ public final class CodexSkillInventoryService {
         }
 
         List<CodexSkillInventory.SkillPackage> packages = new ArrayList<>();
+        List<CodexSkillInventory.Reference> references = new ArrayList<>();
         List<CodexSkillInventory.Finding> findings = new ArrayList<>();
         List<NameDeclaration> declarations = new ArrayList<>();
         MutableStatus status = new MutableStatus();
         Path agents = realRoot.resolve(".agents");
         if (!Files.exists(agents, LinkOption.NOFOLLOW_LINKS)) {
-            return inventory(status, packages, findings);
+            return inventory(status, packages, references, findings);
         }
         if (Files.isSymbolicLink(agents)) {
             blocking(findings, AGENTS_PATH_IS_SYMLINK, ".agents",
                     "The project .agents path is a symbolic link and was not followed");
             status.partial = true;
-            return inventory(status, packages, findings);
+            return inventory(status, packages, references, findings);
         }
         if (!Files.isDirectory(agents, LinkOption.NOFOLLOW_LINKS)) {
             error(findings, DIRECTORY_READ_FAILED, ".agents",
                     "The project .agents path is not a directory");
             status.partial = true;
-            return inventory(status, packages, findings);
+            return inventory(status, packages, references, findings);
         }
         if (!isAnchoredDirectory(agents, realRoot, ".agents", findings, status)) {
-            return inventory(status, packages, findings);
+            return inventory(status, packages, references, findings);
         }
 
         Path skills = agents.resolve("skills");
         if (!Files.exists(skills, LinkOption.NOFOLLOW_LINKS)) {
-            return inventory(status, packages, findings);
+            return inventory(status, packages, references, findings);
         }
         if (Files.isSymbolicLink(skills)) {
             blocking(findings, SKILLS_PATH_IS_SYMLINK, ".agents/skills",
                     "The project Skill directory is a symbolic link and was not followed");
             status.partial = true;
-            return inventory(status, packages, findings);
+            return inventory(status, packages, references, findings);
         }
         if (!Files.isDirectory(skills, LinkOption.NOFOLLOW_LINKS)) {
             error(findings, DIRECTORY_READ_FAILED, ".agents/skills",
                     "The project Skill path is not a directory");
             status.partial = true;
-            return inventory(status, packages, findings);
+            return inventory(status, packages, references, findings);
         }
         if (!isAnchoredDirectory(skills, realRoot, ".agents/skills", findings, status)) {
-            return inventory(status, packages, findings);
+            return inventory(status, packages, references, findings);
         }
 
         List<Path> candidates = new ArrayList<>();
@@ -103,27 +105,28 @@ public final class CodexSkillInventoryService {
                     error(findings, PACKAGE_COUNT_LIMIT_REACHED, ".agents/skills",
                             "Project Skill inventory exceeds the 256-package limit");
                     status.partial = true;
-                    return inventory(status, packages, findings);
+                    return inventory(status, packages, references, findings);
                 }
             }
         } catch (IOException exception) {
             error(findings, DIRECTORY_READ_FAILED, ".agents/skills",
                     "The project Skill directory could not be enumerated");
             status.partial = true;
-            return inventory(status, packages, findings);
+            return inventory(status, packages, references, findings);
         }
         candidates.sort(Comparator.comparing(path -> path.getFileName().toString()));
         for (Path candidate : candidates) {
-            inspectPackage(realRoot, candidate, packages, findings, declarations, status);
+            inspectPackage(realRoot, candidate, packages, references, findings, declarations, status);
         }
         addDuplicateNameFindings(declarations, findings);
-        return inventory(status, packages, findings);
+        return inventory(status, packages, references, findings);
     }
 
     private static void inspectPackage(
             Path realRoot,
             Path packageDirectory,
             List<CodexSkillInventory.SkillPackage> packages,
+            List<CodexSkillInventory.Reference> references,
             List<CodexSkillInventory.Finding> findings,
             List<NameDeclaration> declarations,
             MutableStatus status) {
@@ -215,10 +218,22 @@ public final class CodexSkillInventoryService {
         }
         PackageInspection support = inspectSupportingPaths(
                 realRoot, packageDirectory, packagePath, findings, status);
-        CodexSkillInventory.PackageState state = frontmatter.valid
+        CodexSkillReferenceParser.Result referenceResult = CodexSkillReferenceParser.parse(
+                frontmatter.lines,
+                frontmatter.bodyStart,
+                packagePath,
+                skillPath,
+                support.supportingLogicalPaths,
+                !support.partial);
+        references.addAll(referenceResult.references());
+        findings.addAll(referenceResult.findings());
+        if (referenceResult.partial()) {
+            status.partial = true;
+        }
+        CodexSkillInventory.PackageState state = frontmatter.valid && !referenceResult.invalid()
                 ? CodexSkillInventory.PackageState.MINIMAL_METADATA_VALID
                 : CodexSkillInventory.PackageState.INVALID;
-        if (support.partial) {
+        if (support.partial || referenceResult.partial()) {
             state = CodexSkillInventory.PackageState.PARTIAL;
         }
         packages.add(new CodexSkillInventory.SkillPackage(
@@ -249,7 +264,7 @@ public final class CodexSkillInventoryService {
         if (lines.length == 0 || !"---".equals(stripBom(lines[0]).strip())) {
             error(findings, MISSING_FRONTMATTER, skillPath,
                     "SKILL.md must begin with YAML frontmatter");
-            return ParsedFrontmatter.invalid();
+            return ParsedFrontmatter.invalid(lines);
         }
         int closing = -1;
         for (int index = 1; index < Math.min(lines.length, 101); index++) {
@@ -261,7 +276,7 @@ public final class CodexSkillInventoryService {
         if (closing < 0) {
             error(findings, INVALID_FRONTMATTER, skillPath,
                     "SKILL.md frontmatter has no bounded closing delimiter");
-            return ParsedFrontmatter.invalid();
+            return ParsedFrontmatter.invalid(lines);
         }
         Map<String, String> values = new LinkedHashMap<>();
         boolean valid = true;
@@ -319,7 +334,9 @@ public final class CodexSkillInventoryService {
                 safeName ? name : "",
                 matchesDirectory ? name : "",
                 !description.isBlank(),
-                valid);
+                valid,
+                lines,
+                closing + 1);
     }
 
     private static PackageInspection inspectSupportingPaths(
@@ -335,7 +352,10 @@ public final class CodexSkillInventoryService {
         walkSupportingDirectory(realRoot, packageDirectory, packageDirectory, packagePath,
                 findings, status, accumulator);
         return new PackageInspection(
-                accumulator.supportingFiles, Set.copyOf(accumulator.risks), accumulator.partial);
+                accumulator.supportingFiles,
+                Set.copyOf(accumulator.risks),
+                Set.copyOf(accumulator.supportingLogicalPaths),
+                accumulator.partial);
     }
 
     private static void walkSupportingDirectory(
@@ -377,7 +397,18 @@ public final class CodexSkillInventoryService {
             }
             accumulator.entries++;
             String logical = portable(realRoot.relativize(path));
-            if (Files.isSymbolicLink(path)) {
+            final BasicFileAttributes attributes;
+            try {
+                attributes = Files.readAttributes(
+                        path, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+            } catch (IOException exception) {
+                error(findings, SUPPORT_PATH_READ_FAILED, logical,
+                        "A supporting path could not be classified safely");
+                status.partial = true;
+                accumulator.partial = true;
+                continue;
+            }
+            if (attributes.isSymbolicLink()) {
                 accumulator.risks.add(CodexSkillInventory.Risk.SYMLINK_SUPPORT_PATH);
                 blocking(findings, SUPPORT_PATH_IS_SYMLINK, logical,
                         "A supporting path is a symbolic link and was not followed");
@@ -385,14 +416,15 @@ public final class CodexSkillInventoryService {
                 accumulator.partial = true;
                 continue;
             }
-            if (Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) {
+            if (attributes.isRegularFile()) {
                 accumulator.supportingFiles++;
+                accumulator.supportingLogicalPaths.add(logical);
                 if (looksExecutable(path)) {
                     accumulator.risks.add(CodexSkillInventory.Risk.EXECUTABLE_SUPPORT_FILE);
                 }
                 continue;
             }
-            if (!Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS)) {
+            if (!attributes.isDirectory()) {
                 continue;
             }
             int depth = packageDirectory.relativize(path).getNameCount();
@@ -462,15 +494,19 @@ public final class CodexSkillInventoryService {
     private static CodexSkillInventory inventory(
             MutableStatus status,
             List<CodexSkillInventory.SkillPackage> packages,
+            List<CodexSkillInventory.Reference> references,
             List<CodexSkillInventory.Finding> findings) {
         packages.sort(Comparator.comparing(CodexSkillInventory.SkillPackage::logicalPath));
+        references.sort(CodexSkillInventory.referenceOrder());
         findings.sort(CodexSkillInventory.findingOrder());
         return new CodexSkillInventory(
                 CodexSkillInventory.CURRENT_SCHEMA_VERSION,
+                CodexSkillInventory.REFERENCE_PROFILE_ID,
                 status.partial ? CodexSkillInventory.Status.PARTIAL : CodexSkillInventory.Status.COMPLETE,
                 false,
                 false,
                 packages,
+                references,
                 findings);
     }
 
@@ -576,20 +612,30 @@ public final class CodexSkillInventoryService {
             String declaredName,
             String publicName,
             boolean descriptionPresent,
-            boolean valid) {
+            boolean valid,
+            String[] lines,
+            int bodyStart) {
         private static ParsedFrontmatter invalid() {
-            return new ParsedFrontmatter("", "", false, false);
+            return new ParsedFrontmatter("", "", false, false, new String[0], 0);
+        }
+
+        private static ParsedFrontmatter invalid(String[] lines) {
+            return new ParsedFrontmatter("", "", false, false, lines, lines.length);
         }
     }
 
     private record NameDeclaration(String name, String logicalPath) {}
 
     private record PackageInspection(
-            int supportingFileCount, Set<CodexSkillInventory.Risk> risks, boolean partial) {}
+            int supportingFileCount,
+            Set<CodexSkillInventory.Risk> risks,
+            Set<String> supportingLogicalPaths,
+            boolean partial) {}
 
     private static final class SupportAccumulator {
         private final EnumSet<CodexSkillInventory.Risk> risks =
                 EnumSet.noneOf(CodexSkillInventory.Risk.class);
+        private final Set<String> supportingLogicalPaths = new TreeSet<>();
         private int supportingFiles;
         private int entries;
         private boolean partial;

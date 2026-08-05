@@ -260,7 +260,7 @@ Skill lane 现在按一个用户闭环顺序推进，不再与平台 Gate 并行
 | S5 Claude lifecycle | Claude Skill 与 instruction 的同等闭环 | 逐类型晋级 |
 | S6 Advanced lifecycle | 其他宿主、Router、eval、history improvement 与跨宿主转换 | 依据用户证据解冻 |
 
-当前 `inspect` 用户入口已完成第一刀；S0 第一子门已实现根级 Codex project Skill package 发现、最小 frontmatter 状态、重复声明名和可执行/符号链接风险，仍缺安全引用图，因此 S0 尚未整体晋级。S1 尚未实现。canonical Codex root wrapper 保留为 adapter 合同样例，通用/反向正文 renderer 暂停开发。
+当前 `inspect` 用户入口已完成第一刀；S0 已实现根级 Codex project Skill package 发现、最小 frontmatter 状态、重复声明名、可执行/符号链接风险和安全引用图。引用图采用 `codex-skill-inline-reference-v1` 有限 profile，只解析 `SKILL.md` 正文内包内 inline link/image，不读取或递归跟随 supporting content；只有 `RESOLVED` 暴露 target logical path，`MISSING/UNKNOWN` 目标不回显，缺失、未知与不安全状态分开表达。S0 已完成，S1 persistence triage 与 `SkillBlueprint v1` 尚未实现。canonical Codex root wrapper 保留为 adapter 合同样例，通用/反向正文 renderer 暂停开发。
 
 ## 12. 最小产品切片
 

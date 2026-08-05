@@ -243,6 +243,15 @@
 - 安全边界：本地服务只绑定 loopback，采用启动期随机 token、严格 Origin 校验和无宽泛 CORS；浏览器页面不能绕过 Java 的路径、审批和写入策略。
 - 后续复审：完成四页 MVP 后，以安装包体积、启动速度、文件选择器和窗口体验数据决定是否增加 Tauri/其他薄 WebView 壳；不在当前阶段引入 Electron 或 Rust 依赖。
 
+## ADR-029：Skill 引用图采用有限、内容不回显的 inline profile
+
+- 日期：2026-08-05
+- 状态：接受
+- 决定：Codex Skill Inventory schema 升级为 v2，以 `codex-skill-inline-reference-v1` 解析 `SKILL.md` 正文内的 inline link/image，并输出 source、line/column、类型和 `RESOLVED/MISSING/UNKNOWN`。只有 `RESOLVED` 输出规范化后的包内 target logical path；`MISSING/UNKNOWN` target 为 null。supporting files 继续只枚举路径，永不打开、执行或递归解析。
+- 安全语义：外部 http/https/mailto 和纯 anchor 不属于本地图；绝对路径、Windows/UNC/backslash、未知 scheme、NUL 和 traversal 被阻断且不回显原始 destination。只有完整 supporting inventory 才能断言 `MISSING`；部分 inventory 必须使用 `UNKNOWN`。
+- 原因：S0 需要验证 progressive disclosure 的 supporting-file 连接关系，但引入完整 Markdown AST、读取 supporting content 或递归依赖 DAG 会扩大依赖、隐私和路径攻击面，也会提前侵入 S1/S2。
+- 放弃：声称 full CommonMark；解析 reference-style/HTML/autolink；percent-decode；读取或 hash supporting content；自动修复链接；跨 package/宿主引用；用枚举不完整的结果断言 missing。
+
 ## 待决问题
 
 - [ ] 为正式工程选择 Java 构建工具与最小模块骨架；当前纯 JDK 脚本仅服务 Phase 1 spike。

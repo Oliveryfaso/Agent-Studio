@@ -1,9 +1,9 @@
 # Agent Config Workbench 项目指南
 
-- 文档版本：1.2
-- 日期：2026-08-04
+- 文档版本：1.3
+- 日期：2026-08-05
 - 项目类型：生产型 AI 应用闭环 + Agent 配置治理 + 评测与可观测性
-- 项目阶段：实验室原型 / Codex-first Inspect 纵向切片已可运行
+- 项目阶段：实验室原型 / Codex-first Inspect 与 S0 Skill Inventory 已可运行
 - 当前执行范围：`Inspect → Draft → Diff/Export → Simple Apply/Rollback`；其他宿主、通用转换、GitHub、Router 与历史演化暂时冻结
 
 ## 1. 一句话目标
@@ -23,13 +23,15 @@ Codex-first
 
 - 当前顺序支持 Codex Project Skill、`AGENTS.md`、Agent TOML、Rule/Policy；先完成 Skill 全闭环，再扩展后三类。
 - `inspect codex` 已完成第一刀：人类可读、零写入、只显示逻辑路径和结论，不显示正文、hash 或物理路径。
+- S0 Skill Inventory 已完成：只读 package/metadata/risk discovery 与有限的安全 supporting-file 引用图；当前开始 S1 persistence triage / `SkillBlueprint v1` preview。
 - Claude Code、主流 vibe-coding 宿主、双向转换、GitHub、Skill Router、评测和历史改进仍是长期目标，不取消，但不与核心闭环并行开发。
 - 后文的多宿主平台、研究优化和完整事务设计是长期参考；若与本节的近期顺序冲突，以本节为准。
 
 | 能力 | 当前状态 |
 |---|---|
 | Codex inspect | Active / 第一刀完成 |
-| Codex Skill inventory、triage、draft、diff/export | Next |
+| Codex Skill inventory | Active / S0 完成 |
+| Codex Skill triage、draft、diff/export | Next / S1-S2 |
 | 单文件 Simple Apply/Rollback | Queued |
 | Claude 完整闭环 | Queued after Codex validation |
 | 通用 conversion、Git/GitHub、Wave hosts | Frozen |
@@ -863,7 +865,7 @@ redaction profile + consent scope + retention class
 - `scripts/run-convert-preview.sh codex claude-code <authorized-root> <cwd> [--codex-config <snapshot>]` 及反向命令已可运行。命令严格拒绝 `PARTIAL` IR，限定目标探测在授权根目录，不跟随 symlink，只输出元数据，且固定 `writesPerformed=false`、`applyEligible=false`。
 - 单一、完整、根级 `AGENTS.md → CLAUDE.md` 会在受限内存形成 canonical `@AGENTS.md\n` wrapper，并实际运行 recipe-specific Claude 结构验证和 hash/scope/import round-trip。candidate bytes 不进入默认 JSON；existing target 只使用 bounded hash/size 元数据，identical/conflict/unsafe/stale 分开表达。
 - 其余结构因 content-free IR 不携带正文而通常保持 `ASSISTED/METADATA_ONLY`。Claude → Codex 正文、nested chain、path rule、local override 仍需独立授权的 ephemeral content plane；这不代表整体 adapter maturity 晋级。
-- 当前本地 177 项 fixture 全部通过；后续以 `scripts/test-core.sh` 当次完整输出为准。
+- 当前本地 181 项 fixture 全部通过；后续以 `scripts/test-core.sh` 当次完整输出为准。
 
 ### Phase 3：Analyzer、Core conversion 与 UI
 
@@ -911,14 +913,14 @@ redaction profile + consent scope + retention class
 - S5：Claude 同等闭环。
 - S6：依据用户证据解冻其他宿主、Router、eval、history 和跨宿主能力。
 
-当前状态：Codex `inspect` 第一刀与 S0 Skill Inventory 第一子门已完成；安全引用图仍未完成，所以 S0 尚未整体晋级，S1 尚未实现。旧 Gate 4 conversion 继续作为技术能力记录，不再决定近期产品顺序。详细 gate 见 [SKILL_LIFECYCLE_SPEC.md](SKILL_LIFECYCLE_SPEC.md)。
+当前状态：Codex `inspect` 第一刀与 S0 Skill Inventory 已完成；inventory schema v2 通过有限、内容不回显的 inline-reference profile 表达 `SKILL.md` 到包内 supporting files 的 `RESOLVED/MISSING/UNKNOWN` 引用边，并阻断不安全本地目标。只有 `RESOLVED` 暴露 target logical path；`MISSING/UNKNOWN` 目标脱敏为 null，以 source、line/column、类型和状态保持引用位置。S1 persistence triage 与 `SkillBlueprint v1` 尚未实现。旧 Gate 4 conversion 继续作为技术能力记录，不再决定近期产品顺序。详细 gate 见 [SKILL_LIFECYCLE_SPEC.md](SKILL_LIFECYCLE_SPEC.md)。
 
-### 当前 Gate 状态（2026-08-04）
+### 当前 Gate 状态（2026-08-05）
 
 | Gate | 目标 | 当前状态 | 仍缺什么 |
 |---|---|---|---|
 | Gate 1 | 官方证据、格式边界、决策基线 | 已完成基线 | 持续做版本漂移复核 |
-| Gate 2 | 只读 inventory 与路径安全 | 核心切片完成，Linux/macOS/Windows CI 已通过 | Windows reparse/junction、确定性并发替换 fixture |
+| Gate 2 | 只读 inventory 与路径安全 | 核心切片完成，Linux/macOS/Windows CI 基线已通过并持续复验 | Windows reparse/junction、确定性并发替换 fixture |
 | Gate 3 | Codex/Claude 项目语义读取与 IR | 实验性纵向切片完成 | 用户/managed 层、完整配置合并、外部批准、lossless parser/native validation；整体 adapter 仍为 Inventory |
 | Gate 4 | 双向转换预览 | canonical Codex root wrapper 纵向切片已验证；能力冻结 | 只有核心闭环验证后才复审通用/反向 renderer |
 | Gate 5 | ChangeSet、快照、事务与恢复 | 未开始 | journal、vault、stale-hash、故障注入、byte-identical rollback |

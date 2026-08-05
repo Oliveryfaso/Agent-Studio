@@ -298,3 +298,12 @@
 - `.agents`、`skills`、package、`SKILL.md` 与 supporting path 的符号链接均不跟随；scripts 目录、常见可执行扩展名和 POSIX execute bit 只形成风险标记，不触发执行。
 - 新增 12 项 fixture，覆盖空目录、合法 package、元数据错误与无效/错位声明值脱敏、重复名、祖先/Skill/support symlink、entry budget、零写入与 CLI 隐私合同；全量本地 fixture 从 165 增至 177，conformance 保持 27 项。
 - 本轮只完成 S0 的 package/metadata/risk 子门；安全引用图尚未实现，S1 persistence triage 与 `SkillBlueprint v1` 仍未开始。
+
+## 2026-08-05：完成 S0 安全引用图
+
+- Codex Skill Inventory 升级为 schema v2，并固定 `codex-skill-inline-reference-v1` 语义 profile；新增稳定排序的 content-free reference edges，包含 source、line/column、link/image 类型与 `RESOLVED/MISSING/UNKNOWN` 状态。只有 `RESOLVED` 暴露 target logical path；`MISSING/UNKNOWN` 的 target 为 null，避免正文中未验证的 destination 进入 JSON。
+- 有限解析器只处理已通过 128 KiB、严格 UTF-8、`NOFOLLOW_LINKS` 与读前后属性复核的 `SKILL.md` 正文。它支持 inline link/image、angle destination、fragment/query，忽略 fenced/inline code、HTML comment、纯 anchor 与 http/https/mailto；不宣称 full CommonMark。
+- 本地目标只做词法 normalize 并与已安全枚举的同包普通文件匹配；不 percent-decode、不打开或递归跟随目标。绝对路径、Windows drive/UNC/backslash、未知 URI scheme、NUL 与包外 traversal 形成通用阻断 finding，原始 destination、label、title 和 supporting content 不进入报告。
+- supporting 枚举完整时，未匹配目标为 `MISSING` 并使 package invalid；枚举因 symlink/I/O/预算不完整时为 `UNKNOWN`，避免确定性误报。引用数和 destination 长度有独立预算，超限显式返回 `PARTIAL`。
+- 新增 4 项顶层测试用例（并扩展 symlink/隐私用例），覆盖 resolved link/image、angle/query/fragment/排序、missing/unsafe/Windows/file URI 脱敏、外链/锚点/代码/注释抑制、预算前缀和不完整枚举 unknown；全量本地测试从 177 增至 181，conformance 保持 27 项。
+- S0 已完成；下一活跃切片为 S1 persistence triage 与 `SkillBlueprint v1` preview。平台 Gate 2 的 Windows reparse/junction 和确定性并发替换 fixture 仍是独立发布前待办。
