@@ -3,7 +3,7 @@
 - 文档版本：1.3
 - 日期：2026-08-05
 - 项目类型：生产型 AI 应用闭环 + Agent 配置治理 + 评测与可观测性
-- 项目阶段：实验室原型 / Codex-first Inspect 与 S0 Skill Inventory 已可运行
+- 项目阶段：实验室原型 / Codex-first Inspect、S0 Inventory 与 S1 Blueprint Preview 已可运行
 - 当前执行范围：`Inspect → Draft → Diff/Export → Simple Apply/Rollback`；其他宿主、通用转换、GitHub、Router 与历史演化暂时冻结
 
 ## 1. 一句话目标
@@ -23,7 +23,7 @@ Codex-first
 
 - 当前顺序支持 Codex Project Skill、`AGENTS.md`、Agent TOML、Rule/Policy；先完成 Skill 全闭环，再扩展后三类。
 - `inspect codex` 已完成第一刀：人类可读、零写入、只显示逻辑路径和结论，不显示正文、hash 或物理路径。
-- S0 Skill Inventory 已完成：只读 package/metadata/risk discovery 与有限的安全 supporting-file 引用图；当前开始 S1 persistence triage / `SkillBlueprint v1` preview。
+- S0 Skill Inventory 已完成：只读 package/metadata/risk discovery 与有限的安全 supporting-file 引用图；S1 已完成显式向导信号驱动的 persistence triage 与 `SkillBlueprint v1` preview，当前进入 S2 内存候选、静态校验与 Diff/Export。
 - Claude Code、主流 vibe-coding 宿主、双向转换、GitHub、Skill Router、评测和历史改进仍是长期目标，不取消，但不与核心闭环并行开发。
 - 后文的多宿主平台、研究优化和完整事务设计是长期参考；若与本节的近期顺序冲突，以本节为准。
 
@@ -31,7 +31,8 @@ Codex-first
 |---|---|
 | Codex inspect | Active / 第一刀完成 |
 | Codex Skill inventory | Active / S0 完成 |
-| Codex Skill triage、draft、diff/export | Next / S1-S2 |
+| Codex Skill triage / Blueprint | Active / S1 完成 |
+| Codex Skill candidate、validation、diff/export | Next / S2 |
 | 单文件 Simple Apply/Rollback | Queued |
 | Claude 完整闭环 | Queued after Codex validation |
 | 通用 conversion、Git/GitHub、Wave hosts | Frozen |
@@ -913,7 +914,7 @@ redaction profile + consent scope + retention class
 - S5：Claude 同等闭环。
 - S6：依据用户证据解冻其他宿主、Router、eval、history 和跨宿主能力。
 
-当前状态：Codex `inspect` 第一刀与 S0 Skill Inventory 已完成；inventory schema v2 通过有限、内容不回显的 inline-reference profile 表达 `SKILL.md` 到包内 supporting files 的 `RESOLVED/MISSING/UNKNOWN` 引用边，并阻断不安全本地目标。只有 `RESOLVED` 暴露 target logical path；`MISSING/UNKNOWN` 目标脱敏为 null，以 source、line/column、类型和状态保持引用位置。S1 persistence triage 与 `SkillBlueprint v1` 尚未实现。旧 Gate 4 conversion 继续作为技术能力记录，不再决定近期产品顺序。详细 gate 见 [SKILL_LIFECYCLE_SPEC.md](SKILL_LIFECYCLE_SPEC.md)。
+当前状态：Codex `inspect`、S0 Skill Inventory 与 S1 Blueprint Preview 已完成最小纵向切片。S1 Java 核心只从有界 stdin 接收向导，不接收或扫描 workspace；便捷脚本打开用户显式选择的单个普通非符号链接文件。自由文本只作为用户提供的 Blueprint 字段，分类仅消费显式 recurrence/trigger/success/isolation/enforcement 信号；未确认或不完整请求不产生 Blueprint，高风险 executable automation 被阻断。输出不回显整段原始请求、不调用 LLM、不写目标文件且不可 Apply。旧 Gate 4 conversion 继续作为技术能力记录，不再决定近期产品顺序。详细 gate 见 [SKILL_LIFECYCLE_SPEC.md](SKILL_LIFECYCLE_SPEC.md)。
 
 ### 当前 Gate 状态（2026-08-05）
 

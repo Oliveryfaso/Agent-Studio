@@ -252,6 +252,15 @@
 - 原因：S0 需要验证 progressive disclosure 的 supporting-file 连接关系，但引入完整 Markdown AST、读取 supporting content 或递归依赖 DAG 会扩大依赖、隐私和路径攻击面，也会提前侵入 S1/S2。
 - 放弃：声称 full CommonMark；解析 reference-style/HTML/autolink；percent-decode；读取或 hash supporting content；自动修复链接；跨 package/宿主引用；用枚举不完整的结果断言 missing。
 
+## ADR-030：S1 persistence triage 采用显式向导信号，不采用自由文本关键词分类
+
+- 日期：2026-08-05
+- 状态：接受
+- 决定：`persistence-triage-v1` 保留用户自然语言 goal/description，但分类只消费一次性/持续性、重复流程、明确触发、成功标准、隔离职责、确定性强制和 executable automation 等显式向导事实。证据不足返回 `UNKNOWN/NEEDS_CONFIRMATION`；高风险自动化返回阻断提案。只有用户确认 `SKILL + PROJECT` 且字段完整时才构造 `SkillBlueprint v1`。
+- 内容边界：Blueprint 会包含用户主动提供的结构化内容，因此不能声称 content-free；顶层分别记录 `workspaceContentIncluded=false`、`userProvidedContentIncluded=true` 和 `rawRequestIncluded=false`。S1 不读取其他项目内容、不启动 LLM/网络/子进程、不生成 `SKILL.md` candidate、不写目标文件且不可 Apply。
+- 原因：自由文本关键词会被否定、引用、中英混合和“编辑已有 Skill”的一次性请求击穿；显式向导信号虽然需要多一步交互，却能提供稳定证据、保守降级和可测试的 UI/API 合同。
+- 放弃：用关键词或单次 LLM 输出直接决定持久化类型；为不完整 Skill 构造伪 Blueprint；把 Prompt/Instruction/Agent/Tool 请求强塞进 `SkillBlueprint`。
+
 ## 待决问题
 
 - [ ] 为正式工程选择 Java 构建工具与最小模块骨架；当前纯 JDK 脚本仅服务 Phase 1 spike。

@@ -260,7 +260,7 @@ Skill lane 现在按一个用户闭环顺序推进，不再与平台 Gate 并行
 | S5 Claude lifecycle | Claude Skill 与 instruction 的同等闭环 | 逐类型晋级 |
 | S6 Advanced lifecycle | 其他宿主、Router、eval、history improvement 与跨宿主转换 | 依据用户证据解冻 |
 
-当前 `inspect` 用户入口已完成第一刀；S0 已实现根级 Codex project Skill package 发现、最小 frontmatter 状态、重复声明名、可执行/符号链接风险和安全引用图。引用图采用 `codex-skill-inline-reference-v1` 有限 profile，只解析 `SKILL.md` 正文内包内 inline link/image，不读取或递归跟随 supporting content；只有 `RESOLVED` 暴露 target logical path，`MISSING/UNKNOWN` 目标不回显，缺失、未知与不安全状态分开表达。S0 已完成，S1 persistence triage 与 `SkillBlueprint v1` 尚未实现。canonical Codex root wrapper 保留为 adapter 合同样例，通用/反向正文 renderer 暂停开发。
+当前 `inspect` 用户入口、S0 Skill Inventory 与 S1 Blueprint Preview 已完成最小纵向切片。S1 使用 `persistence-triage-v1`：自由文本只进入用户明确提供的 goal/description 等字段，分类仅使用显式向导事实；保留 `UNKNOWN/NEEDS_CONFIRMATION`，高风险 executable automation 默认阻断。只有用户确认 `SKILL + PROJECT` 且 name、目标、输入输出、trigger/exclusion/boundary、步骤、完成定义、验证、权限、风险及至少 3+3 正负触发例完整时，才返回 `SkillBlueprint v1`。报告明确区分 `workspaceContentIncluded=false` 与 `userProvidedContentIncluded=true`，并固定 `rawRequestIncluded=false`、`llmUsed=false`、`writesPerformed=false`、`applyEligible=false`。下一活跃 Gate 是 S2 内存候选、静态校验和 Diff/Export。
 
 ## 12. 最小产品切片
 

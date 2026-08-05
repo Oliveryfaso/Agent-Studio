@@ -307,3 +307,11 @@
 - supporting 枚举完整时，未匹配目标为 `MISSING` 并使 package invalid；枚举因 symlink/I/O/预算不完整时为 `UNKNOWN`，避免确定性误报。引用数和 destination 长度有独立预算，超限显式返回 `PARTIAL`。
 - 新增 4 项顶层测试用例（并扩展 symlink/隐私用例），覆盖 resolved link/image、angle/query/fragment/排序、missing/unsafe/Windows/file URI 脱敏、外链/锚点/代码/注释抑制、预算前缀和不完整枚举 unknown；全量本地测试从 177 增至 181，conformance 保持 27 项。
 - S0 已完成；下一活跃切片为 S1 persistence triage 与 `SkillBlueprint v1` preview。平台 Gate 2 的 Windows reparse/junction 和确定性并发替换 fixture 仍是独立发布前待办。
+
+## 2026-08-05：完成 S1 persistence triage 与 SkillBlueprint Preview
+
+- 新增 stdin 驱动的 `skill-blueprint-preview codex` 与 `scripts/run-skill-blueprint-preview.sh <guided-request.intent>`。Java 核心最多读取 32 KiB、160 行的严格 UTF-8，不接收 workspace 路径；便捷脚本仅接受用户显式选择的普通非符号链接文件并重定向 stdin。
+- 固定 `persistence-triage-v1`：分类只使用向导显式事实，不按自然语言关键词猜测。决策覆盖 Prompt、Instruction、Skill、Agent、deterministic tool/policy、高风险 executable proposal 与 Unknown；证据不足保守返回需确认，高风险自动化阻断 Blueprint。
+- `SkillBlueprint v1` 仅在用户确认 `SKILL + PROJECT` 且必要字段、boundary example、权限/风险与至少 3+3 个去重且不重合的正负触发例完整时构造。Skill 名称复用 S0 `[a-z0-9-]{1,63}` profile；supporting-file 只记录 portable package-relative proposal，不读取或创建目标。
+- Preview 明确是 content-bearing user form，而不是 inventory 的 content-free 报告：`workspaceContentIncluded=false`、`userProvidedContentIncluded=true`、`rawRequestIncluded=false`。同时硬编码 `llmUsed=false`、`writesPerformed=false`、`applyEligible=false`，不生成 `SKILL.md` 候选、不调用网络/子进程/LLM。
+- 新增 20 项 CLI fixture，覆盖六类 triage、Unknown、冲突信号、scope、未确认/不完整/完整 Skill、3+3 与边界冲突、executable 阻断、权限风险、portable supporting path、stdin/UTF-8/预算、错误脱敏、稳定 ID 和零写入。全量本地测试从 181 增至 201，版本化 conformance 保持 27 项；下一活跃切片为 S2 内存 candidate、静态校验与 Diff/Export。

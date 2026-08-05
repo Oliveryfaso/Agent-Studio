@@ -2,6 +2,8 @@ package dev.agentconfig.workbench.cli;
 
 import dev.agentconfig.workbench.analyze.InstructionAnalysisEngine;
 import dev.agentconfig.workbench.analyze.InstructionAnalysisReport;
+import dev.agentconfig.workbench.blueprint.BlueprintPreviewService;
+import dev.agentconfig.workbench.blueprint.SkillBlueprintPreview;
 import dev.agentconfig.workbench.context.EffectiveInstructionCompiler;
 import dev.agentconfig.workbench.context.EffectiveInstructionContext;
 import dev.agentconfig.workbench.context.ContextCompileRequest;
@@ -27,6 +29,7 @@ import dev.agentconfig.workbench.scan.Severity;
 import dev.agentconfig.workbench.skill.CodexSkillInventory;
 import dev.agentconfig.workbench.skill.CodexSkillInventoryService;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.PrintWriter;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
@@ -45,6 +48,10 @@ public final class Cli {
     }
 
     public int run(String[] args, PrintWriter output, PrintWriter error) {
+        return run(args, System.in, output, error);
+    }
+
+    public int run(String[] args, InputStream input, PrintWriter output, PrintWriter error) {
         if (args.length > 0 && "inspect".equals(args[0])) {
             return runInspect(args, output, error);
         }
@@ -60,7 +67,33 @@ public final class Cli {
         if (args.length > 0 && "skill-inventory".equals(args[0])) {
             return runSkillInventory(args, output, error);
         }
+        if (args.length > 0 && "skill-blueprint-preview".equals(args[0])) {
+            return runSkillBlueprintPreview(args, input, output, error);
+        }
         return runScan(args, output, error);
+    }
+
+    private int runSkillBlueprintPreview(
+            String[] args, InputStream input, PrintWriter output, PrintWriter error) {
+        if (args.length != 2 || !"codex".equals(args[1])) {
+            usage(error);
+            return 2;
+        }
+        try {
+            SkillBlueprintPreview preview = new BlueprintPreviewService()
+                    .preview(input);
+            SkillBlueprintPreviewJsonWriter.write(preview, output);
+            return switch (preview.status()) {
+                case BLUEPRINT_READY, TRIAGE_READY -> 0;
+                case NEEDS_CONFIRMATION, INCOMPLETE, BLOCKED -> 3;
+            };
+        } catch (IllegalArgumentException exception) {
+            error.println("Skill blueprint preview request rejected: " + exception.getMessage());
+            return 2;
+        } catch (IOException exception) {
+            error.println("Skill blueprint preview failed: " + exception.getClass().getSimpleName());
+            return 2;
+        }
     }
 
     private int runSkillInventory(String[] args, PrintWriter output, PrintWriter error) {
@@ -305,7 +338,10 @@ public final class Cli {
                 + " <claude-code|codex> <authorized-workspace> <current-directory>"
                 + " [source-host option]");
         error.println("   or: agent-config-workbench skill-inventory codex <authorized-workspace>");
-        error.println("Commands are metadata-only: they never write to or execute content from the workspace.");
+        error.println("   or: agent-config-workbench skill-blueprint-preview codex"
+                + " < bounded-guided-request.intent");
+        error.println("Workspace inspection commands never write to or execute discovered content.");
+        error.println("Blueprint preview may echo bounded user form fields, but reads no workspace content.");
         error.println("Git administrative metadata is not inspected unless --git-metadata is supplied.");
     }
 }
