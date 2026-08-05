@@ -21,6 +21,7 @@ import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.attribute.PosixFilePermission;
+import java.nio.file.attribute.PosixFileAttributeView;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
@@ -119,7 +120,7 @@ public final class FixtureSkillTransactionService {
             Files.createDirectory(transactionDirectory);
             Snapshot snapshot = snapshot(transactionDirectory, current);
             String targetPermissions = current.present()
-                    ? current.permissions() : "OWNER_READ,OWNER_WRITE";
+                    ? current.permissions() : newTargetPermissions(target.getParent());
             Manifest manifest = new Manifest(transactionId, approvedPlan.id(),
                     approvedPlan.rootIdentitySha256(), candidate.logicalPath(), current.present(),
                     current.present() ? current.sha256() : "",
@@ -866,6 +867,11 @@ public final class FixtureSkillTransactionService {
         } catch (IOException | UnsupportedOperationException exception) {
             return "UNSUPPORTED";
         }
+    }
+
+    private static String newTargetPermissions(Path parent) throws IOException {
+        return Files.getFileStore(parent).supportsFileAttributeView(PosixFileAttributeView.class)
+                ? "OWNER_READ,OWNER_WRITE" : "UNSUPPORTED";
     }
 
     private static void setPermissions(Path path, String encoded) throws IOException {
