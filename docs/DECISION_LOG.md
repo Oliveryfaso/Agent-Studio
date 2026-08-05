@@ -289,6 +289,14 @@
 - 故障语义：新增 intent 后、move 与 APPLIED 之间的独立注入点；一旦 intent 已持久化，move 异常必须保留 stage 并返回 `RECOVERY_REQUIRED`，不能降级为普通 pre-write failure。`PREPARED/COMMIT_INTENT` 的 rollback 要求先 recover。
 - 能力边界：这里只证明 service process-crash reconciliation，不宣称 power-loss durability。Java 21 `SecureDirectoryStream` 是 provider 可选能力，在当前 macOS/Windows 基线上不可作为统一后端，而且不能提供 leaf CAS；父路径 swap、conditional replace/delete、rollback intent、批量启动恢复和 directory fsync 仍阻断 Gate 6。
 
+## ADR-034：S3b2 采用对称 rollback WAL 与显式 pending discovery
+
+- 日期：2026-08-05
+- 状态：接受
+- 决定：manifest v3 增加 `ROLLBACK_INTENT`、rollback source identity 与 result identity。existing target 先构造并校验确定性 rollback stage，再持久化 intent、复核 candidate 与 stage 后原子替换；原本 absent 的目标先持久化 intent，再做 guarded delete。`recoverTransaction` 仅接受“source 仍匹配且 stage 完整，完成 rollback”或“result 已匹配且 stage 已消失，只补记 ROLLED_BACK”两种唯一组合，其他组合 fail closed。
+- Discovery：新增显式、只读的 `scanPendingTransactions`，只查看 state root 直接子项，严格接受 canonical v4 transaction UUID，使用 direct-entry 与 manifest 双预算、稳定排序和 cursor；只报告 PREPARED、COMMIT_INTENT、ROLLBACK_INTENT 及恢复方向，不输出候选/快照内容，不遍历子树，也不自动调用恢复。
+- 审计与边界：rollback receipt 分开记录本次确认发生的 target/state write。同名预存 rollback stage 不归本事务所有且不得被清理；intent 结果不确定时保守保留 stage；move 前再次校验 stage identity。fixture manifest 不提供跨 schema 迁移承诺。本切片仍只证明 service process-crash reconciliation，不证明 power-loss durability、OS 级 conditional replace/delete、父路径 CAS 或 Windows junction/reparse 安全，因此 Gate 6 保持关闭。
+
 ## 待决问题
 
 - [ ] 为正式工程选择 Java 构建工具与最小模块骨架；当前纯 JDK 脚本仅服务 Phase 1 spike。

@@ -14,6 +14,7 @@ import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
@@ -125,7 +126,7 @@ public final class FixtureSkillTransactionService {
                     approvedPlan.rootIdentitySha256(), candidate.logicalPath(), current.present(),
                     current.present() ? current.sha256() : "",
                     current.present() ? current.identity() : "", candidate.sha256(),
-                    targetPermissions, ManifestState.PREPARED);
+                    targetPermissions, "", "", ManifestState.PREPARED);
             writeManifest(transactionDirectory, manifest, false);
             if (failurePoint == FailurePoint.AFTER_SNAPSHOT) {
                 return failure(FixtureSkillApplyReceipt.Status.FAILED_BEFORE_WRITE,
@@ -231,7 +232,14 @@ public final class FixtureSkillTransactionService {
     public FixtureSkillRollbackReceipt rollback(
             Path authorizedFixtureRoot, Path fixtureStateRoot, String transactionId)
             throws IOException {
-        if (transactionId == null || !transactionId.matches("[0-9a-f-]{36}")) {
+        return rollback(authorizedFixtureRoot, fixtureStateRoot, transactionId,
+                RollbackFailurePoint.NONE);
+    }
+
+    public FixtureSkillRollbackReceipt rollback(
+            Path authorizedFixtureRoot, Path fixtureStateRoot, String transactionId,
+            RollbackFailurePoint failurePoint) throws IOException {
+        if (!validTransactionId(transactionId)) {
             throw new IllegalArgumentException("invalid transaction id");
         }
         Path root;
@@ -240,43 +248,48 @@ public final class FixtureSkillTransactionService {
             root = fixtureRoot(authorizedFixtureRoot);
             stateRoot = stateRoot(fixtureStateRoot, root);
         } catch (Blocked blocked) {
-            return rollbackReceipt(transactionId, "unknown", false,
+            return rollbackReceipt(transactionId, "unknown", false, false,
                     FixtureSkillRollbackReceipt.Status.SNAPSHOT_INVALID, blocked.code);
         }
         Path transactionDirectory = stateRoot.resolve(transactionId);
         if (Files.isSymbolicLink(transactionDirectory)
                 || !Files.isDirectory(transactionDirectory, LinkOption.NOFOLLOW_LINKS)) {
-            return rollbackReceipt(transactionId, "unknown", false,
+            return rollbackReceipt(transactionId, "unknown", false, false,
                     FixtureSkillRollbackReceipt.Status.SNAPSHOT_INVALID, "MANIFEST_MISSING");
         }
         Manifest manifest;
         try {
             manifest = readManifest(transactionDirectory);
         } catch (IOException | IllegalArgumentException exception) {
-            return rollbackReceipt(transactionId, "unknown", false,
+            return rollbackReceipt(transactionId, "unknown", false, false,
                     FixtureSkillRollbackReceipt.Status.SNAPSHOT_INVALID, "MANIFEST_INVALID");
         }
         if (!manifest.transactionId.equals(transactionId)
                 || !manifest.rootIdentity.equals(rootIdentity(root))) {
-            return rollbackReceipt(transactionId, manifest.logicalPath, false,
+            return rollbackReceipt(transactionId, manifest.logicalPath, false, false,
                     FixtureSkillRollbackReceipt.Status.SNAPSHOT_INVALID, "MANIFEST_SCOPE_MISMATCH");
         }
         if (manifest.state == ManifestState.PREPARED
                 || manifest.state == ManifestState.COMMIT_INTENT) {
-            return rollbackReceipt(transactionId, manifest.logicalPath, false,
+            return rollbackReceipt(transactionId, manifest.logicalPath, false, false,
                     FixtureSkillRollbackReceipt.Status.RECOVERY_REQUIRED,
                     "TRANSACTION_REQUIRES_RECOVERY");
         }
         if (manifest.state == ManifestState.ABORTED) {
-            return rollbackReceipt(transactionId, manifest.logicalPath, false,
+            return rollbackReceipt(transactionId, manifest.logicalPath, false, false,
                     FixtureSkillRollbackReceipt.Status.SNAPSHOT_INVALID,
                     "TRANSACTION_ABORTED_WITHOUT_APPLY");
+        }
+        if (manifest.state == ManifestState.ROLLBACK_INTENT) {
+            return rollbackReceipt(transactionId, manifest.logicalPath, false, false,
+                    FixtureSkillRollbackReceipt.Status.RECOVERY_REQUIRED,
+                    "ROLLBACK_REQUIRES_RECOVERY");
         }
         Path target;
         try {
             target = targetFromManifest(root, manifest.logicalPath);
         } catch (Blocked blocked) {
-            return rollbackReceipt(transactionId, manifest.logicalPath, false,
+            return rollbackReceipt(transactionId, manifest.logicalPath, false, false,
                     FixtureSkillRollbackReceipt.Status.SNAPSHOT_INVALID, blocked.code);
         }
         if (manifest.state == ManifestState.ROLLED_BACK) {
@@ -284,13 +297,11 @@ public final class FixtureSkillTransactionService {
             try {
                 current = inspect(root, target);
             } catch (Blocked blocked) {
-                return rollbackReceipt(transactionId, manifest.logicalPath, false,
+                return rollbackReceipt(transactionId, manifest.logicalPath, false, false,
                         FixtureSkillRollbackReceipt.Status.RECOVERY_REQUIRED, blocked.code);
             }
-            boolean restored = manifest.existedBefore
-                    ? current.present() && current.sha256().equals(manifest.preimageSha256)
-                    : !current.present() && current.blockedReason().isEmpty();
-            return rollbackReceipt(transactionId, manifest.logicalPath, false,
+            boolean restored = matchesRestoredPreimage(current, manifest);
+            return rollbackReceipt(transactionId, manifest.logicalPath, false, false,
                     restored ? FixtureSkillRollbackReceipt.Status.ALREADY_ROLLED_BACK
                             : FixtureSkillRollbackReceipt.Status.RECOVERY_REQUIRED,
                     restored ? "ALREADY_ROLLED_BACK" : "ROLLED_BACK_STATE_CHANGED");
@@ -299,28 +310,149 @@ public final class FixtureSkillTransactionService {
         try {
             current = inspect(root, target);
         } catch (Blocked blocked) {
-            return rollbackReceipt(transactionId, manifest.logicalPath, false,
+            return rollbackReceipt(transactionId, manifest.logicalPath, false, false,
                     FixtureSkillRollbackReceipt.Status.RECOVERY_REQUIRED, blocked.code);
         }
-        if (!current.present() || !current.sha256().equals(manifest.candidateSha256)) {
-            return rollbackReceipt(transactionId, manifest.logicalPath, false,
+        if (!current.present() || !current.sha256().equals(manifest.candidateSha256)
+                || !current.permissions().equals(manifest.permissions)) {
+            return rollbackReceipt(transactionId, manifest.logicalPath, false, false,
                     FixtureSkillRollbackReceipt.Status.CURRENT_HASH_MISMATCH,
                     "CURRENT_HASH_MISMATCH");
         }
-        boolean restored = restore(root, target, manifest, transactionDirectory);
-        if (!restored) {
-            return rollbackReceipt(transactionId, manifest.logicalPath, false,
-                    FixtureSkillRollbackReceipt.Status.SNAPSHOT_INVALID, "SNAPSHOT_INVALID");
+        Path rollbackStage = target.getParent().resolve(rollbackStageLeaf(transactionId));
+        boolean stageOwned = false;
+        boolean intentAttempted = false;
+        boolean intentPersisted = false;
+        boolean targetMutated = false;
+        boolean preserveStage = false;
+        try {
+            String resultIdentity = "";
+            if (manifest.existedBefore) {
+                if (!validSnapshot(transactionDirectory, manifest)) {
+                    return rollbackReceipt(transactionId, manifest.logicalPath, false, false,
+                            FixtureSkillRollbackReceipt.Status.SNAPSHOT_INVALID,
+                            "SNAPSHOT_INVALID");
+                }
+                byte[] original = readBounded(transactionDirectory.resolve(SNAPSHOT));
+                if (Files.exists(rollbackStage, LinkOption.NOFOLLOW_LINKS)) {
+                    if (stageState(rollbackStage, manifest.preimageSha256,
+                            manifest.permissions) != StageState.CANDIDATE) {
+                        return rollbackReceipt(transactionId, manifest.logicalPath,
+                                false, false,
+                                FixtureSkillRollbackReceipt.Status.FAILED_BEFORE_WRITE,
+                                "ROLLBACK_STAGE_COLLISION");
+                    }
+                } else {
+                    writeForcedNew(rollbackStage, original);
+                    stageOwned = true;
+                    setPermissions(rollbackStage, manifest.permissions);
+                }
+                TargetView stageView = inspect(root, rollbackStage);
+                if (!stageView.present()
+                        || !stageView.sha256().equals(manifest.preimageSha256)
+                        || !stageView.permissions().equals(manifest.permissions)) {
+                    return rollbackReceipt(transactionId, manifest.logicalPath, false, false,
+                            FixtureSkillRollbackReceipt.Status.FAILED_BEFORE_WRITE,
+                            "ROLLBACK_STAGE_INVALID");
+                }
+                resultIdentity = stageView.identity();
+            }
+            if (failurePoint == RollbackFailurePoint.AFTER_ROLLBACK_STAGE) {
+                return rollbackReceipt(transactionId, manifest.logicalPath, false, false,
+                        FixtureSkillRollbackReceipt.Status.FAILED_BEFORE_WRITE,
+                        "FAULT_AFTER_ROLLBACK_STAGE");
+            }
+            TargetView beforeIntent = inspect(root, target);
+            if (!sameCandidate(beforeIntent, manifest, current.identity())) {
+                return rollbackReceipt(transactionId, manifest.logicalPath, false, false,
+                        FixtureSkillRollbackReceipt.Status.CURRENT_HASH_MISMATCH,
+                        "STALE_BEFORE_ROLLBACK_INTENT");
+            }
+            manifest = manifest.withRollbackIntent(current.identity(), resultIdentity);
+            intentAttempted = true;
+            writeManifest(transactionDirectory, manifest, true);
+            intentPersisted = true;
+            if (failurePoint == RollbackFailurePoint.AFTER_ROLLBACK_INTENT) {
+                preserveStage = manifest.existedBefore;
+                return rollbackReceipt(transactionId, manifest.logicalPath, false, true,
+                        FixtureSkillRollbackReceipt.Status.RECOVERY_REQUIRED,
+                        "FAULT_AFTER_ROLLBACK_INTENT");
+            }
+            TargetView beforeMutation = inspect(root, target);
+            if (!sameCandidate(beforeMutation, manifest, manifest.rollbackSourceIdentity)) {
+                preserveStage = manifest.existedBefore;
+                return rollbackReceipt(transactionId, manifest.logicalPath, false, true,
+                        FixtureSkillRollbackReceipt.Status.RECOVERY_REQUIRED,
+                        "STALE_AFTER_ROLLBACK_INTENT");
+            }
+            if (manifest.existedBefore && stageState(rollbackStage,
+                    manifest.preimageSha256, manifest.permissions,
+                    manifest.rollbackResultIdentity) != StageState.CANDIDATE) {
+                preserveStage = true;
+                return rollbackReceipt(transactionId, manifest.logicalPath, false, true,
+                        FixtureSkillRollbackReceipt.Status.RECOVERY_REQUIRED,
+                        "ROLLBACK_STAGE_CHANGED_AFTER_INTENT");
+            }
+            if (manifest.existedBefore) moveAtomic(rollbackStage, target, true);
+            else Files.delete(target);
+            targetMutated = true;
+            if (failurePoint
+                    == RollbackFailurePoint.AFTER_TARGET_MUTATION_BEFORE_ROLLED_BACK_MANIFEST) {
+                return rollbackReceipt(transactionId, manifest.logicalPath, true, true,
+                        FixtureSkillRollbackReceipt.Status.RECOVERY_REQUIRED,
+                        "FAULT_AFTER_ROLLBACK_TARGET_MUTATION");
+            }
+            if (!rollbackResultMatches(root, target, manifest)) {
+                return rollbackReceipt(transactionId, manifest.logicalPath, true, true,
+                        FixtureSkillRollbackReceipt.Status.RECOVERY_REQUIRED,
+                        "ROLLBACK_RESULT_INVALID");
+            }
+            writeManifest(transactionDirectory,
+                    manifest.withState(ManifestState.ROLLED_BACK), true);
+            return rollbackReceipt(transactionId, manifest.logicalPath, true, true,
+                    FixtureSkillRollbackReceipt.Status.ROLLED_BACK, "ROLLBACK_VERIFIED");
+        } catch (Blocked blocked) {
+            if (!targetMutated) targetMutated = rollbackMutationObserved(root, target, manifest);
+            boolean observedIntent = intentPersisted
+                    || (intentAttempted && rollbackIntentPersisted(
+                            transactionDirectory, transactionId));
+            if (intentAttempted) preserveStage = manifest.existedBefore && !targetMutated;
+            boolean retryableBeforeIntent = intentAttempted && !observedIntent
+                    && manifestStateIs(transactionDirectory, transactionId,
+                            ManifestState.APPLIED);
+            return rollbackReceipt(transactionId, manifest.logicalPath, targetMutated,
+                    observedIntent, intentAttempted && !retryableBeforeIntent
+                            ? FixtureSkillRollbackReceipt.Status.RECOVERY_REQUIRED
+                            : FixtureSkillRollbackReceipt.Status.FAILED_BEFORE_WRITE,
+                    retryableBeforeIntent ? "ROLLBACK_INTENT_NOT_PERSISTED_RETRY"
+                            : blocked.code);
+        } catch (IOException exception) {
+            if (!targetMutated) targetMutated = rollbackMutationObserved(root, target, manifest);
+            boolean observedIntent = intentPersisted
+                    || (intentAttempted && rollbackIntentPersisted(
+                            transactionDirectory, transactionId));
+            if (intentAttempted) preserveStage = manifest.existedBefore && !targetMutated;
+            boolean retryableBeforeIntent = intentAttempted && !observedIntent
+                    && manifestStateIs(transactionDirectory, transactionId,
+                            ManifestState.APPLIED);
+            return rollbackReceipt(transactionId, manifest.logicalPath, targetMutated,
+                    observedIntent, intentAttempted && !retryableBeforeIntent
+                            ? FixtureSkillRollbackReceipt.Status.RECOVERY_REQUIRED
+                            : FixtureSkillRollbackReceipt.Status.FAILED_BEFORE_WRITE,
+                    retryableBeforeIntent ? "ROLLBACK_INTENT_NOT_PERSISTED_RETRY"
+                            : intentAttempted ? "ROLLBACK_REQUIRES_RECOVERY"
+                                    : "ROLLBACK_WRITE_FAILED");
+        } finally {
+            if (stageOwned && !targetMutated && !preserveStage) {
+                Files.deleteIfExists(rollbackStage);
+            }
         }
-        writeManifest(transactionDirectory, manifest.withState(ManifestState.ROLLED_BACK), true);
-        return rollbackReceipt(transactionId, manifest.logicalPath, true,
-                FixtureSkillRollbackReceipt.Status.ROLLED_BACK, "ROLLBACK_VERIFIED");
     }
 
     public FixtureSkillRecoveryReceipt recoverTransaction(
             Path authorizedFixtureRoot, Path fixtureStateRoot, String transactionId)
             throws IOException {
-        if (transactionId == null || !transactionId.matches("[0-9a-f-]{36}")) {
+        if (!validTransactionId(transactionId)) {
             throw new IllegalArgumentException("invalid transaction id");
         }
         Path root;
@@ -371,13 +503,12 @@ public final class FixtureSkillTransactionService {
                     false, false, false, blocked.code);
         }
         Path stage = target.getParent().resolve(stageLeaf(transactionId));
-        StageState stageState = stageState(
-                stage, manifest.candidateSha256, manifest.permissions);
         return switch (manifest.state) {
             case PREPARED -> recoverPrepared(transactionDirectory, manifest, current,
-                    stage, stageState);
+                    stage, stageState(stage, manifest.candidateSha256, manifest.permissions));
             case COMMIT_INTENT -> recoverCommitIntent(root, transactionDirectory, manifest,
-                    target, current, stage, stageState);
+                    target, current, stage,
+                    stageState(stage, manifest.candidateSha256, manifest.permissions));
             case APPLIED -> recoverApplied(transactionDirectory, manifest, current);
             case ABORTED -> matchesPreimage(current, manifest)
                     ? recoveryReceipt(transactionId, manifest.logicalPath,
@@ -386,6 +517,8 @@ public final class FixtureSkillTransactionService {
                     : recoveryReceipt(transactionId, manifest.logicalPath,
                             FixtureSkillRecoveryReceipt.Status.RECOVERY_REQUIRED,
                             false, false, false, "ABORTED_TARGET_CHANGED");
+            case ROLLBACK_INTENT -> recoverRollbackIntent(root, transactionDirectory,
+                    manifest, target, current);
             case ROLLED_BACK -> matchesRestoredPreimage(current, manifest)
                     ? recoveryReceipt(transactionId, manifest.logicalPath,
                             FixtureSkillRecoveryReceipt.Status.ALREADY_ROLLED_BACK,
@@ -396,9 +529,122 @@ public final class FixtureSkillTransactionService {
         };
     }
 
+    /**
+     * Explicit read-only discovery for fixture transactions. This does not run at startup and
+     * never invokes recovery; callers must select a returned transaction deliberately.
+     */
+    public FixturePendingScanReport scanPendingTransactions(Path authorizedFixtureRoot,
+            Path fixtureStateRoot, FixturePendingScanRequest request) throws IOException {
+        if (request == null) throw new NullPointerException("request");
+        Path root;
+        Path stateRoot;
+        try {
+            root = fixtureRoot(authorizedFixtureRoot);
+            stateRoot = stateRoot(fixtureStateRoot, root);
+        } catch (Blocked blocked) {
+            return pendingReport(FixturePendingScanReport.Status.INVALID_STATE_ROOT,
+                    List.of(), 0, 0, 0, 0, 0, Optional.empty(), blocked.code);
+        }
+
+        List<Path> directEntries = new ArrayList<>();
+        int observed = 0;
+        try (DirectoryStream<Path> stream = Files.newDirectoryStream(stateRoot)) {
+            for (Path entry : stream) {
+                if (entry.getFileName().toString().equals(STATE_MARKER)) continue;
+                observed++;
+                if (observed > request.maxDirectEntries()) {
+                    return pendingReport(
+                            FixturePendingScanReport.Status.DIRECT_ENTRY_BUDGET_EXCEEDED,
+                            List.of(), observed, 0, 0, 0, 0, Optional.empty(),
+                            "DIRECT_ENTRY_BUDGET_EXCEEDED");
+                }
+                directEntries.add(entry);
+            }
+        }
+        directEntries.sort(Comparator.comparing(path -> path.getFileName().toString()));
+
+        int invalidEntries = 0;
+        List<Path> transactionDirectories = new ArrayList<>();
+        for (Path entry : directEntries) {
+            String leaf = entry.getFileName().toString();
+            BasicFileAttributes attributes;
+            try {
+                attributes = Files.readAttributes(
+                        entry, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+            } catch (IOException exception) {
+                invalidEntries++;
+                continue;
+            }
+            if (!validTransactionId(leaf) || !attributes.isDirectory()
+                    || attributes.isSymbolicLink() || attributes.isOther()
+                    || Files.isSymbolicLink(entry)) {
+                invalidEntries++;
+                continue;
+            }
+            if (request.afterTransactionIdExclusive().isEmpty()
+                    || leaf.compareTo(request.afterTransactionIdExclusive().orElseThrow()) > 0) {
+                transactionDirectories.add(entry);
+            }
+        }
+
+        List<FixturePendingScanReport.PendingTransaction> pending = new ArrayList<>();
+        int inspected = 0;
+        int terminal = 0;
+        int invalidTransactions = 0;
+        String expectedRootIdentity = rootIdentity(root);
+        String lastInspected = null;
+        for (Path directory : transactionDirectories) {
+            if (inspected == request.maxManifests()) {
+                return pendingReport(FixturePendingScanReport.Status.PARTIAL_MANIFEST_BUDGET,
+                        pending, observed, inspected, terminal, invalidEntries,
+                        invalidTransactions, Optional.of(lastInspected),
+                        "MANIFEST_BUDGET_EXHAUSTED");
+            }
+            inspected++;
+            String transactionId = directory.getFileName().toString();
+            lastInspected = transactionId;
+            Manifest manifest;
+            try {
+                manifest = readManifest(directory);
+            } catch (IOException | IllegalArgumentException exception) {
+                invalidTransactions++;
+                continue;
+            }
+            if (!manifest.transactionId.equals(transactionId)
+                    || !manifest.rootIdentity.equals(expectedRootIdentity)) {
+                invalidTransactions++;
+                continue;
+            }
+            switch (manifest.state) {
+                case PREPARED -> pending.add(new FixturePendingScanReport.PendingTransaction(
+                        transactionId, FixturePendingScanReport.Action.RECOVER_APPLY,
+                        FixturePendingScanReport.Phase.PREPARED));
+                case COMMIT_INTENT -> pending.add(
+                        new FixturePendingScanReport.PendingTransaction(transactionId,
+                                FixturePendingScanReport.Action.RECOVER_APPLY,
+                                FixturePendingScanReport.Phase.COMMIT_INTENT));
+                case ROLLBACK_INTENT -> pending.add(
+                        new FixturePendingScanReport.PendingTransaction(transactionId,
+                                FixturePendingScanReport.Action.RECOVER_ROLLBACK,
+                                FixturePendingScanReport.Phase.ROLLBACK_INTENT));
+                case APPLIED, ABORTED, ROLLED_BACK -> terminal++;
+            }
+        }
+        return pendingReport(FixturePendingScanReport.Status.COMPLETE, pending, observed,
+                inspected, terminal, invalidEntries, invalidTransactions, Optional.empty(),
+                "PENDING_SCAN_COMPLETE");
+    }
+
     public enum FailurePoint {
         NONE, AFTER_SNAPSHOT, AFTER_STAGE, BEFORE_MOVE, AFTER_COMMIT_INTENT,
         AFTER_MOVE_BEFORE_APPLIED_MANIFEST, AFTER_MOVE
+    }
+
+    public enum RollbackFailurePoint {
+        NONE,
+        AFTER_ROLLBACK_STAGE,
+        AFTER_ROLLBACK_INTENT,
+        AFTER_TARGET_MUTATION_BEFORE_ROLLED_BACK_MANIFEST
     }
 
     private static boolean restore(Path root, Path target, Manifest manifest,
@@ -503,7 +749,58 @@ public final class FixtureSkillTransactionService {
     private static boolean matchesRestoredPreimage(TargetView current, Manifest manifest) {
         if (current.blockedReason().isPresent()) return false;
         if (!manifest.existedBefore) return !current.present();
-        return current.present() && current.sha256().equals(manifest.preimageSha256);
+        return current.present() && current.sha256().equals(manifest.preimageSha256)
+                && current.permissions().equals(manifest.permissions)
+                && (manifest.rollbackResultIdentity.isEmpty()
+                        || current.identity().equals(manifest.rollbackResultIdentity));
+    }
+
+    private static FixtureSkillRecoveryReceipt recoverRollbackIntent(Path root,
+            Path transactionDirectory, Manifest manifest, Path target, TargetView current)
+            throws IOException {
+        Path rollbackStage = target.getParent().resolve(rollbackStageLeaf(manifest.transactionId));
+        StageState rollbackStageState = manifest.existedBefore
+                ? stageState(rollbackStage, manifest.preimageSha256, manifest.permissions,
+                        manifest.rollbackResultIdentity)
+                : stageState(rollbackStage, "", "", "");
+        if (matchesRestoredPreimage(current, manifest)
+                && rollbackStageState == StageState.ABSENT) {
+            writeManifest(transactionDirectory, manifest.withState(ManifestState.ROLLED_BACK), true);
+            return recoveryReceipt(manifest.transactionId, manifest.logicalPath,
+                    FixtureSkillRecoveryReceipt.Status.FINALIZED_ROLLBACK,
+                    false, true, false, "ROLLBACK_MANIFEST_FINALIZED");
+        }
+        if (!sameCandidate(current, manifest, manifest.rollbackSourceIdentity)
+                || (manifest.existedBefore && rollbackStageState != StageState.CANDIDATE)
+                || (!manifest.existedBefore && rollbackStageState != StageState.ABSENT)) {
+            return recoveryReceipt(manifest.transactionId, manifest.logicalPath,
+                    FixtureSkillRecoveryReceipt.Status.RECOVERY_REQUIRED,
+                    false, false, false, "ROLLBACK_INTENT_AMBIGUOUS");
+        }
+        boolean targetMutated = false;
+        try {
+            if (manifest.existedBefore) moveAtomic(rollbackStage, target, true);
+            else Files.delete(target);
+            targetMutated = true;
+            if (!rollbackResultMatches(root, target, manifest)) {
+                return recoveryReceipt(manifest.transactionId, manifest.logicalPath,
+                        FixtureSkillRecoveryReceipt.Status.RECOVERY_REQUIRED,
+                        true, false, false, "RECOVERED_ROLLBACK_TARGET_INVALID");
+            }
+            writeManifest(transactionDirectory,
+                    manifest.withState(ManifestState.ROLLED_BACK), true);
+            return recoveryReceipt(manifest.transactionId, manifest.logicalPath,
+                    FixtureSkillRecoveryReceipt.Status.COMPLETED_ROLLBACK,
+                    true, true, false, "ROLLBACK_COMPLETED_FROM_INTENT");
+        } catch (Blocked blocked) {
+            return recoveryReceipt(manifest.transactionId, manifest.logicalPath,
+                    FixtureSkillRecoveryReceipt.Status.RECOVERY_REQUIRED,
+                    targetMutated, false, false, blocked.code);
+        } catch (IOException exception) {
+            return recoveryReceipt(manifest.transactionId, manifest.logicalPath,
+                    FixtureSkillRecoveryReceipt.Status.RECOVERY_REQUIRED,
+                    targetMutated, false, false, "ROLLBACK_RECOVERY_WRITE_FAILED");
+        }
     }
 
     private static FixtureSkillRecoveryReceipt recoverApplied(Path transactionDirectory,
@@ -535,24 +832,44 @@ public final class FixtureSkillTransactionService {
 
     private static StageState stageState(
             Path stage, String candidateSha256, String expectedPermissions) {
+        return stageState(stage, candidateSha256, expectedPermissions, "");
+    }
+
+    private static StageState stageState(Path stage, String candidateSha256,
+            String expectedPermissions, String expectedIdentity) {
         try {
             if (!Files.exists(stage, LinkOption.NOFOLLOW_LINKS)) return StageState.ABSENT;
             if (Files.isSymbolicLink(stage)
                     || !Files.isRegularFile(stage, LinkOption.NOFOLLOW_LINKS)
                     || unsafeLink(stage)) return StageState.INVALID;
-            return hash(readBounded(stage)).equals(candidateSha256)
-                            && permissions(stage).equals(expectedPermissions)
+            TargetView view = inspect(stage.getParent().getParent().getParent(), stage);
+            return view.present() && view.sha256().equals(candidateSha256)
+                            && view.permissions().equals(expectedPermissions)
+                            && (expectedIdentity.isEmpty()
+                                    || view.identity().equals(expectedIdentity))
                     ? StageState.CANDIDATE : StageState.INVALID;
-        } catch (IOException exception) {
+        } catch (IOException | Blocked exception) {
             return StageState.INVALID;
         }
     }
 
     private static String stageLeaf(String transactionId) {
-        if (transactionId == null || !transactionId.matches("[0-9a-f-]{36}")) {
+        if (!validTransactionId(transactionId)) {
             throw new IllegalArgumentException("invalid transaction id");
         }
         return ".acw-s3-stage-" + transactionId + ".tmp";
+    }
+
+    private static String rollbackStageLeaf(String transactionId) {
+        if (!validTransactionId(transactionId)) {
+            throw new IllegalArgumentException("invalid transaction id");
+        }
+        return ".acw-s3-rollback-" + transactionId + ".tmp";
+    }
+
+    private static boolean validTransactionId(String transactionId) {
+        return transactionId != null && transactionId.matches(
+                "[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}");
     }
 
     private static Snapshot snapshot(Path transactionDirectory, TargetView current)
@@ -808,8 +1125,64 @@ public final class FixtureSkillTransactionService {
     }
 
     private static FixtureSkillRollbackReceipt rollbackReceipt(String tx, String path,
-            boolean writes, FixtureSkillRollbackReceipt.Status status, String detail) {
-        return new FixtureSkillRollbackReceipt(1, tx, status, path, true, writes, detail);
+            boolean targetWrites, boolean stateWrites,
+            FixtureSkillRollbackReceipt.Status status, String detail) {
+        return new FixtureSkillRollbackReceipt(1, tx, status, path, true,
+                targetWrites, stateWrites, detail);
+    }
+
+    private static FixturePendingScanReport pendingReport(
+            FixturePendingScanReport.Status status,
+            List<FixturePendingScanReport.PendingTransaction> pending,
+            int observed, int inspected, int terminal, int invalidEntries,
+            int invalidTransactions, Optional<String> nextCursor, String detail) {
+        return new FixturePendingScanReport(1, status, pending, observed, inspected,
+                terminal, invalidEntries, invalidTransactions, nextCursor,
+                true, false, false, detail);
+    }
+
+    private static boolean sameCandidate(TargetView current, Manifest manifest,
+            String expectedIdentity) {
+        return current.blockedReason().isEmpty() && current.present()
+                && current.sha256().equals(manifest.candidateSha256)
+                && current.permissions().equals(manifest.permissions)
+                && current.identity().equals(expectedIdentity);
+    }
+
+    private static boolean rollbackResultMatches(Path root, Path target, Manifest manifest)
+            throws IOException, Blocked {
+        TargetView current = inspect(root, target);
+        return matchesRestoredPreimage(current, manifest);
+    }
+
+    private static boolean rollbackIntentPersisted(Path transactionDirectory,
+            String transactionId) {
+        try {
+            Manifest observed = readManifest(transactionDirectory);
+            return observed.transactionId.equals(transactionId)
+                    && (observed.state == ManifestState.ROLLBACK_INTENT
+                            || observed.state == ManifestState.ROLLED_BACK);
+        } catch (IOException | IllegalArgumentException exception) {
+            return false;
+        }
+    }
+
+    private static boolean manifestStateIs(Path transactionDirectory, String transactionId,
+            ManifestState expected) {
+        try {
+            Manifest observed = readManifest(transactionDirectory);
+            return observed.transactionId.equals(transactionId) && observed.state == expected;
+        } catch (IOException | IllegalArgumentException exception) {
+            return false;
+        }
+    }
+
+    private static boolean rollbackMutationObserved(Path root, Path target, Manifest manifest) {
+        try {
+            return rollbackResultMatches(root, target, manifest);
+        } catch (IOException | Blocked exception) {
+            return false;
+        }
     }
 
     private static void moveAtomic(Path source, Path target, boolean replace) throws IOException {
@@ -907,7 +1280,7 @@ public final class FixtureSkillTransactionService {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         try (DataOutputStream output = new DataOutputStream(bytes)) {
             output.writeUTF("ACW-S3-FIXTURE-MANIFEST");
-            output.writeInt(2);
+            output.writeInt(3);
             output.writeUTF(manifest.transactionId);
             output.writeUTF(manifest.planId);
             output.writeUTF(manifest.rootIdentity);
@@ -917,6 +1290,8 @@ public final class FixtureSkillTransactionService {
             output.writeUTF(manifest.preimageIdentity);
             output.writeUTF(manifest.candidateSha256);
             output.writeUTF(manifest.permissions);
+            output.writeUTF(manifest.rollbackSourceIdentity);
+            output.writeUTF(manifest.rollbackResultIdentity);
             output.writeUTF(manifest.state.name());
             output.writeUTF(manifestIntegrity(manifest));
         }
@@ -929,12 +1304,13 @@ public final class FixtureSkillTransactionService {
                 || Files.size(path) > 4096) throw new IOException("manifest missing");
         byte[] bytes = Files.readAllBytes(path);
         try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(bytes))) {
-            if (!"ACW-S3-FIXTURE-MANIFEST".equals(input.readUTF()) || input.readInt() != 2) {
+            if (!"ACW-S3-FIXTURE-MANIFEST".equals(input.readUTF()) || input.readInt() != 3) {
                 throw new IOException("manifest schema");
             }
             Manifest manifest = new Manifest(input.readUTF(), input.readUTF(), input.readUTF(),
                     input.readUTF(), input.readBoolean(), input.readUTF(), input.readUTF(),
-                    input.readUTF(), input.readUTF(), ManifestState.valueOf(input.readUTF()));
+                    input.readUTF(), input.readUTF(), input.readUTF(), input.readUTF(),
+                    ManifestState.valueOf(input.readUTF()));
             String integrity = input.readUTF();
             if (input.read() != -1) throw new IOException("manifest trailing bytes");
             validateManifest(manifest);
@@ -946,7 +1322,7 @@ public final class FixtureSkillTransactionService {
     }
 
     private static void validateManifest(Manifest manifest) throws IOException {
-        if (!manifest.transactionId.matches("[0-9a-f-]{36}")
+        if (!validTransactionId(manifest.transactionId)
                 || !manifest.planId.matches("scp_[0-9a-f]{64}")
                 || !manifest.rootIdentity.matches("[0-9a-f]{64}")
                 || !manifest.logicalPath.matches(
@@ -958,6 +1334,20 @@ public final class FixtureSkillTransactionService {
                 || (!manifest.preimageIdentity.isEmpty()
                         && !manifest.preimageIdentity.matches("[0-9a-f]{64}"))) {
             throw new IOException("manifest semantic validation");
+        }
+        boolean rollbackIntent = manifest.state == ManifestState.ROLLBACK_INTENT;
+        boolean explicitRolledBack = manifest.state == ManifestState.ROLLED_BACK
+                && !manifest.rollbackSourceIdentity.isEmpty();
+        if ((rollbackIntent || explicitRolledBack)
+                && (!manifest.rollbackSourceIdentity.matches("[0-9a-f]{64}")
+                        || (manifest.existedBefore
+                                != manifest.rollbackResultIdentity.matches("[0-9a-f]{64}")))) {
+            throw new IOException("manifest rollback identities");
+        }
+        if (!rollbackIntent && !explicitRolledBack
+                && (!manifest.rollbackSourceIdentity.isEmpty()
+                        || !manifest.rollbackResultIdentity.isEmpty())) {
+            throw new IOException("manifest unexpected rollback identities");
         }
         if (!"UNSUPPORTED".equals(manifest.permissions)) {
             try {
@@ -973,11 +1363,12 @@ public final class FixtureSkillTransactionService {
     }
 
     private static String manifestIntegrity(Manifest manifest) {
-        return hash(tuple("fixture-manifest:v2", manifest.transactionId, manifest.planId,
+        return hash(tuple("fixture-manifest:v3", manifest.transactionId, manifest.planId,
                 manifest.rootIdentity, manifest.logicalPath,
                 Boolean.toString(manifest.existedBefore), manifest.preimageSha256,
                 manifest.preimageIdentity, manifest.candidateSha256,
-                manifest.permissions, manifest.state.name()));
+                manifest.permissions, manifest.rollbackSourceIdentity,
+                manifest.rollbackResultIdentity, manifest.state.name()));
     }
 
     private static Candidate readyCandidate(CodexSkillDraftPreview draft) {
@@ -1038,17 +1429,27 @@ public final class FixtureSkillTransactionService {
 
     private record Snapshot(Optional<String> sha256) {}
 
-    private enum ManifestState { PREPARED, COMMIT_INTENT, APPLIED, ABORTED, ROLLED_BACK }
+    private enum ManifestState {
+        PREPARED, COMMIT_INTENT, APPLIED, ABORTED, ROLLBACK_INTENT, ROLLED_BACK
+    }
 
     private enum StageState { ABSENT, CANDIDATE, INVALID }
 
     private record Manifest(String transactionId, String planId, String rootIdentity,
             String logicalPath, boolean existedBefore, String preimageSha256,
             String preimageIdentity, String candidateSha256, String permissions,
+            String rollbackSourceIdentity, String rollbackResultIdentity,
             ManifestState state) {
         Manifest withState(ManifestState next) {
             return new Manifest(transactionId, planId, rootIdentity, logicalPath, existedBefore,
-                    preimageSha256, preimageIdentity, candidateSha256, permissions, next);
+                    preimageSha256, preimageIdentity, candidateSha256, permissions,
+                    rollbackSourceIdentity, rollbackResultIdentity, next);
+        }
+
+        Manifest withRollbackIntent(String sourceIdentity, String resultIdentity) {
+            return new Manifest(transactionId, planId, rootIdentity, logicalPath, existedBefore,
+                    preimageSha256, preimageIdentity, candidateSha256, permissions,
+                    sourceIdentity, resultIdentity, ManifestState.ROLLBACK_INTENT);
         }
     }
 

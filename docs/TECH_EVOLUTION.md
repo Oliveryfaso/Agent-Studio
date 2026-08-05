@@ -339,3 +339,11 @@
 - 新增 content-free `FixtureSkillRecoveryReceipt` 与显式、幂等 `recoverTransaction`。恢复可 abort 未提交的 PREPARED、完成 intent、补记已经 move 的 apply，并在目标、preimage identity、权限、snapshot、stage、manifest 或拓扑不一致时拒绝推进。
 - subagent 终审发现并修复三处边界：intent 后 move 失败不得删除 stage；APPLIED 只有在 snapshot 仍有效时才能承诺 rollback；恢复不能把相同字节但 identity/权限已变的 preimage 当作未变化。
 - 新增 11 项恢复/对抗 fixture，全量本地测试从 230 增至 241，conformance 保持 27 项。该切片只证明服务进程崩溃恢复，不保证断电持久性；rollback intent、启动恢复枚举、OS 级 CAS/防 TOCTOU 和 Windows reparse 仍是下一门槛。
+
+## 2026-08-05：完成 S3b2 fixture rollback WAL 与 pending discovery
+
+- manifest 升级为 v3，增加 `ROLLBACK_INTENT`、rollback source/result identity；existing 与 originally-absent 两条 rollback 路径都在目标操作前记录 intent，并区分“操作尚未发生”和“操作已发生、只差终态日志”的恢复窗口。
+- `recoverTransaction` 增加 `COMPLETED_ROLLBACK` / `FINALIZED_ROLLBACK`；只有 candidate identity/hash/permissions、snapshot、rollback stage identity 和恢复结果形成唯一组合时才推进。重复恢复保持幂等，外部同字节重建、权限漂移、损坏或链接均 fail closed。
+- 新增 `scanPendingTransactions` 只读 API：只扫描 state root 直接子项，使用 canonical v4 UUID、稳定排序、cursor、direct-entry 与 manifest 双预算，返回 content-free pending metadata；它不在启动时自动执行，也不修改或恢复任何事务。
+- subagent 审查推动修复 stage ownership、intent 写入结果不确定时的保留策略、intent 后 stage identity 复核和 receipt target/state write 分离。该切片仍不保证断电级 directory fsync、OS 级 CAS/dir-handle-relative 操作或 Windows junction/reparse，Gate 5 仍为部分完成，Gate 6 保持关闭。
+- 新增 7 项 rollback WAL 与 5 项 pending discovery fixture；全量本地测试从 241 增至 253，版本化 conformance 保持 27 项。
