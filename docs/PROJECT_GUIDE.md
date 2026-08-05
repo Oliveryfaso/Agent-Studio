@@ -3,7 +3,7 @@
 - 文档版本：1.3
 - 日期：2026-08-05
 - 项目类型：生产型 AI 应用闭环 + Agent 配置治理 + 评测与可观测性
-- 项目阶段：实验室原型 / Codex-first Inspect 与 Skill S0–S2 只读闭环已可运行
+- 项目阶段：实验室原型 / Codex-first Inspect 与 Skill S0–S2 已可运行，S3a 仅完成 fixture 事务证明
 - 当前执行范围：`Inspect → Draft → Diff/Export → Simple Apply/Rollback`；其他宿主、通用转换、GitHub、Router 与历史演化暂时冻结
 
 ## 1. 一句话目标
@@ -23,7 +23,7 @@ Codex-first
 
 - 当前顺序支持 Codex Project Skill、`AGENTS.md`、Agent TOML、Rule/Policy；先完成 Skill 全闭环，再扩展后三类。
 - `inspect codex` 已完成第一刀：人类可读、零写入、只显示逻辑路径和结论，不显示正文、hash 或物理路径。
-- S0 Skill Inventory 与安全引用图、S1 persistence triage / `SkillBlueprint v1`、S2 确定性内存 `SKILL.md` / 最终字节静态校验 / stdout Export 均已完成。S2 不接收目标工作区，合成 Diff 只以空文件为基线；当前进入 S3 单文件目标审阅、真实 Diff、Simple Apply/Rollback。
+- S0 Skill Inventory 与安全引用图、S1 persistence triage / `SkillBlueprint v1`、S2 确定性内存 `SKILL.md` / 最终字节静态校验 / stdout Export 均已完成。S3a 已用 marker 限定的临时 fixture 验证单文件目标审阅、真实 Diff、Simple Apply/Rollback 协议，但没有 CLI，拒绝普通项目，不等于 Gate 6。
 - Claude Code、主流 vibe-coding 宿主、双向转换、GitHub、Skill Router、评测和历史改进仍是长期目标，不取消，但不与核心闭环并行开发。
 - 后文的多宿主平台、研究优化和完整事务设计是长期参考；若与本节的近期顺序冲突，以本节为准。
 
@@ -33,7 +33,7 @@ Codex-first
 | Codex Skill inventory | Active / S0 完成 |
 | Codex Skill triage / Blueprint | Active / S1 完成 |
 | Codex Skill candidate、validation、diff/export | Active / S2 完成 |
-| 单文件目标审阅、Simple Apply/Rollback | Next / S3 |
+| 单文件目标审阅、Simple Apply/Rollback | Active / S3a fixture 协议完成，S3b 恢复与授权待做 |
 | Claude 完整闭环 | Queued after Codex validation |
 | 通用 conversion、Git/GitHub、Wave hosts | Frozen |
 | Router、gap、history/evolution、hooks | Research backlog |
@@ -909,12 +909,12 @@ redaction profile + consent scope + retention class
 - S0：Codex Skill package 只读 inventory 与引用图。
 - S1：自然语言/向导 → persistence classification → `SkillBlueprint v1`，preview-only。
 - S2：确定性模板、内存候选、最终字节静态校验与 stdout Diff/export。已完成。
-- S3：目标探测、真实 Diff 与项目内单文件 Simple Apply/Rollback。当前下一步。
+- S3：S3a fixture-only 目标探测、真实 Diff 与单文件事务已完成；S3b durable recovery 与真实项目授权待做。
 - S4：同一闭环扩展到 AGENTS、Agent TOML 与 Rule/Policy。
 - S5：Claude 同等闭环。
 - S6：依据用户证据解冻其他宿主、Router、eval、history 和跨宿主能力。
 
-当前状态：Codex `inspect` 与 Skill S0–S2 已完成最小只读纵向切片。S1 Java 核心只从有界 stdin 接收向导并输出已确认 Blueprint；S2 把它确定性渲染为内存 `SKILL.md`，验证最终 bytes，默认只输出 content-free candidate metadata，并可显式导出正文、synthetic new-file Diff 或 Prompt。整个 Java 链路不接收或写入目标 workspace、不调用 LLM/网络/子进程且不可 Apply；便捷 launcher 只在本仓库 `build/` 编译 class cache。3+3 仍是静态契约，不是已运行的模型路由 eval。旧 Gate 4 conversion 继续作为技术能力记录，不再决定近期产品顺序。详细 gate 见 [SKILL_LIFECYCLE_SPEC.md](SKILL_LIFECYCLE_SPEC.md)。
+当前状态：Codex `inspect` 与 Skill S0–S2 已完成最小只读纵向切片。S3a 内部 API 只在带精确 marker 的临时 workspace 与独立 state root 中工作，证明了真实 Diff、审批/preimage 绑定、快照、stale 拒绝、原子 move、写后校验、故障自动恢复和 rollback hash guard；没有普通用户入口，也不会接受一般项目目录。3+3 仍是静态契约，不是已运行的模型路由 eval。旧 Gate 4 conversion 继续作为技术能力记录，不再决定近期产品顺序。
 
 ### 当前 Gate 状态（2026-08-05）
 
@@ -924,8 +924,8 @@ redaction profile + consent scope + retention class
 | Gate 2 | 只读 inventory 与路径安全 | 核心切片完成，Linux/macOS/Windows CI 基线已通过并持续复验 | Windows reparse/junction、确定性并发替换 fixture |
 | Gate 3 | Codex/Claude 项目语义读取与 IR | 实验性纵向切片完成 | 用户/managed 层、完整配置合并、外部批准、lossless parser/native validation；整体 adapter 仍为 Inventory |
 | Gate 4 | 双向转换预览 | canonical Codex root wrapper 纵向切片已验证；能力冻结 | 只有核心闭环验证后才复审通用/反向 renderer |
-| Gate 5 | ChangeSet、快照、事务与恢复 | 未开始 | journal、vault、stale-hash、故障注入、byte-identical rollback |
-| Gate 6 | 真实工作区 Apply | 未开始 | Gate 2/4/5 全通过、明确批准与 post-validate |
+| Gate 5 | ChangeSet、快照、事务与恢复 | S3a fixture 单文件切片完成 | durable journal、启动恢复、目标与路径组件的 OS 级 CAS/dir-handle-relative 防 TOCTOU、Windows reparse/junction、长期 vault |
+| Gate 6 | 真实工作区 Apply | 未开始 | Gate 5 剩余项、明确目录授权、用户审批入口与真实工作区 post-validate |
 | Gate 7 | UI、Wave 1、GitHub/分发 | GitHub 发布基线完成，其余未开始 | Vue 工作流、其他宿主语义、PR 导出、安装包、签名/SBOM |
 
 ## 18. MVP 发布门槛

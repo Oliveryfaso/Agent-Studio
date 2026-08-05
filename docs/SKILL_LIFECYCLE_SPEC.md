@@ -255,12 +255,12 @@ Skill lane 现在按一个用户闭环顺序推进，不再与平台 Gate 并行
 | S0 Inventory | Codex Skill package 只读发现、引用图、重复名、可执行风险 | 无 |
 | S1 Blueprint Preview | 自然语言/向导 → persistence classification → `SkillBlueprint v1` | 无 |
 | S2 Validated Draft | 确定性单文件模板、最终字节静态校验、stdout content/synthetic-diff/prompt export | 无；已完成 |
-| S3 Single-file Apply/Rollback | 项目内单文件审批、hash recheck、原始字节备份、原子替换和受保护回退 | 明确批准后 |
+| S3 Single-file Apply/Rollback | S3a 已在专用 marker fixture 验证目标探测、真实 Diff、审批绑定、外置快照、原子替换和 hash-guard rollback；普通项目入口仍关闭 | fixture 内部 API；真实项目仍不可用 |
 | S4 Native asset expansion | 将同一闭环扩展到 AGENTS、Agent TOML 和 Rule/Policy | 逐类型晋级 |
 | S5 Claude lifecycle | Claude Skill 与 instruction 的同等闭环 | 逐类型晋级 |
 | S6 Advanced lifecycle | 其他宿主、Router、eval、history improvement 与跨宿主转换 | 依据用户证据解冻 |
 
-当前 `inspect` 用户入口与 Skill S0–S2 已完成最小只读闭环。S1 使用 `persistence-triage-v1`，只有用户确认 `SKILL + PROJECT` 且必要字段、权限风险与至少 3+3 正负触发例完整时返回 `SkillBlueprint v1`。S2 使用 `codex-project-skill-template-v1` 在内存生成一个 `.agents/skills/<name>/SKILL.md`，再由可独立接收 final candidate bytes 的 `codex-project-skill-static-v1` 检查严格 UTF-8/LF、description 安全约束、预算、路径、canonical content 和 hash；默认 JSON 不含候选正文，只有 `READY` 可显式 stdout export content、带 `SYNTHETIC_NEW_FILE / NOT_CHECKED` 标记的 new-file Diff 或 Prompt。`REVIEW_REQUIRED/INVALID` 禁止 raw export。当前没有运行模型路由 eval、LLM 草案、Skill 分解、supporting-file 生成、目标探测或目标写入；这些不能从 3+3 静态契约被推断为已经通过。下一活跃 Gate 是 S3 单文件目标审阅、真实 Diff、Simple Apply/Rollback。
+当前 `inspect` 用户入口与 Skill S0–S2 已完成最小只读闭环。S1 使用 `persistence-triage-v1`，只有用户确认 `SKILL + PROJECT` 且必要字段、权限风险与至少 3+3 正负触发例完整时返回 `SkillBlueprint v1`。S2 使用确定性模板与独立 final-byte validator，默认 JSON 不含候选正文，只有 `READY` 可显式 stdout export。S3a 进一步用没有 CLI 的内部 API，在两个带精确 marker、彼此分离的临时 fixture root 中验证单个 `.agents/skills/<name>/SKILL.md` 的真实目标探测、审批绑定、快照、写前复核、原子替换、写后验证、故障恢复和受保护 rollback。普通项目、durable journal、启动恢复和完整 Windows reparse 防护尚未开放；也仍未运行模型路由 eval、LLM 草案、Skill 分解或 supporting-file 生成。
 
 ## 12. 最小产品切片
 

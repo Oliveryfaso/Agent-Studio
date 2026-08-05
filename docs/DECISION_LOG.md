@@ -221,7 +221,7 @@
 ## ADR-026：初期写入采用单文件 Simple Apply/Rollback
 
 - 日期：2026-08-04
-- 状态：接受，尚未实现
+- 状态：接受；S3a fixture 协议已实现，普通项目入口未实现
 - 决定：首个写入切片只处理一个项目内明确路径；保留 authorized-root containment、symlink 拒绝、preimage hash 复核、原始字节备份、同目录原子替换、写后校验和 rollback hash guard。
 - 暂缓：跨文件事务、SQLite journal、长期 vault、Recovery Center、崩溃补偿编排和自动 Git 操作。
 - 原因：用户已允许原型期不采用最严格的发布标准，但文件不丢失和不覆盖并发修改仍是最低产品合同。
@@ -269,6 +269,16 @@
 - 内容与风险边界：frontmatter 只有 `name` 和包含 trigger/exclusion 的 `description`；3+3 fixture 不进入运行时正文，也不被宣称为真实模型路由 eval。只有路径的 supporting-file proposal、tools、额外 permission 或 elevated risk 进入 `REVIEW_REQUIRED` 并禁止 raw export。本阶段不读取或写入目标、不生成 supporting content、不运行 LLM/网络/进程；便捷 launcher 只在本仓库 `build/` 编译 class cache。
 - 原因：先证明 Blueprint 能稳定变成可审阅的原生字节，比同时引入模型起草、分解、多宿主 renderer 或写入事务更直接验证核心用户价值；默认不输出正文也保持与既有 metadata-first 治理合同一致。
 - 放弃：S2 引入通用 Skill IR/renderer registry、Markdown AST/YAML 依赖、真实目标三方 Diff、LLM provider、Router/eval runner、自动 supporting file 或 Apply。
+
+## ADR-032：S3a 先用不可误用的 fixture 证明单文件事务
+
+- 日期：2026-08-05
+- 状态：接受
+- 决定：首个写入实现没有 CLI，只接受 marker 内容精确匹配的临时 fixture workspace，并要求另一个彼此不包含、同样带 marker 的 state root。只处理 S2 `READY` 的单个 `.agents/skills/<name>/SKILL.md`，支持 absent/existing/no-op/blocked 探测、真实完整替换 Diff、plan/root/candidate/preimage/diff 绑定、写前复核、外置原始字节快照、同目录 staging、原子 move、写后验证、故障注入和当前 hash guard rollback。
+- 授权语义：当前 approval token 是完整 plan 的确定性完整性绑定，不是密钥签名、用户身份或可独立授予权限的 capability；Apply 会再次计算实际目标 Diff。真实产品仍需在 UI/API 层取得明确目录授权与用户批准。
+- 已解决审查项：workspace identity 绑定 canonical path、root 与 marker 的文件身份/时间和 marker 内容 hash，同路径删除重建会令旧 plan 失效；`PREPARED` 事务不能回退后来碰巧具有 candidate bytes 的用户文件；自动恢复 receipt 会如实标记已经发生目标写入。
+- 未通过项：`ATOMIC_MOVE` 不是 compare-and-swap，最后一次检查到文件操作之间仍可发生目标内容或父路径组件替换，包括 symlink/junction swap；真实入口需要 OS 级 CAS 或 dir-handle-relative 防 TOCTOU。move 成功到 manifest `APPLIED` 持久化之间也仍有崩溃窗口；尚无启动恢复、durable journal、Windows junction/reparse 完整 fixture 或长期 vault。因此 Gate 5 只算 fixture 子切片，Gate 6 保持未开始。
+- 原因：先用强 marker 和无公开入口隔离真实用户文件，可以验证事务 API 与失败语义，同时不把尚未具备 crash/concurrency 证明的原型包装成可用 Apply。
 
 ## 待决问题
 

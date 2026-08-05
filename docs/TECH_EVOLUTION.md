@@ -323,3 +323,11 @@
 - `codex-project-skill-static-v1` 对最终 UTF-8/LF bytes、128 KiB 预算、description 预算、canonical path、exact frontmatter、章节顺序和完整 SHA-256 绑定做检查。tools、额外 permission、supporting-file proposal 或 elevated risk 返回 `REVIEW_REQUIRED`，且不生成 supporting content/链接。
 - 默认 JSON 固定 `candidateContentIncluded=false`；只有 `READY` 候选可显式 `--export content|diff|prompt`，`REVIEW_REQUIRED/INVALID` 保持 metadata-only。Diff 使用固定 LF、自带 `SYNTHETIC_NEW_FILE / NOT_CHECKED` 标记并保留全部空行，不能冒充真实目标差异。
 - 终审后将 validator 拆为可独立接收 final candidate bytes 的组件，并加入 canonical-content mutation fixture；补齐 description angle-bracket、Markdown 嵌套结构转义、S2 quoted YAML → S0 inventory 回读、schema/hash/status/完整 checks、review export gate 与 direct API candidate/render budget。新增 14 项 S2 CLI fixture和 1 项 S0 回读回归后，全量本地测试从 201 增至 216，conformance 保持 27 项；下一活跃切片为 S3 单文件目标探测、真实 Diff 与 Simple Apply/Rollback。
+
+## 2026-08-05：完成 S3a fixture-only 单文件事务证明
+
+- 新增没有 CLI 的 `FixtureSkillTransactionService`。workspace 与外置 state root 都必须是显式创建、marker 内容精确匹配且彼此分离的临时 fixture；普通项目不会因目录结构相似而进入写入路径。
+- `prepare` 只接受 S2 `READY` candidate，探测 absent/existing/no-op/blocked 目标，生成真实完整替换 Diff 和 metadata-only plan。plan 绑定 root identity、candidate、preimage identity/hash/长度和 Diff hash；Apply 重新计算实际 Diff，重新探测 preimage 并拒绝 stale 或审批元数据篡改。
+- Apply 在目标父目录写入并 force staging file，保留原始字节与权限到外置 transaction snapshot，只允许原子 move，写后再次验证 candidate hash。故障注入覆盖 snapshot 后、stage 后、move 前和 move 后；move 后错误按 candidate hash guard 自动恢复。Rollback 仅在当前内容仍等于本事务 candidate 时恢复原始字节，或 guarded delete 恢复原本 absent；`PREPARED` 事务不能删除后来碰巧相同的用户文件。
+- root identity 增加 root/marker 文件身份、时间与 marker 内容 hash，防止旧 absent plan 对同路径重建的 fixture 生效；receipt 不含文件正文，并区分实际写入、自动恢复和需要人工恢复。
+- 新增 14 项事务 fixture；全量本地测试从 216 增至 230，版本化 conformance 保持 27 项。终审明确保留两个 S3b 阻断项：目标内容及父路径组件在检查到文件操作之间的 OS 级 CAS/dir-handle-relative 防 TOCTOU（含 symlink/junction swap），以及 move 到 manifest `APPLIED` 的 crash gap；在 durable recovery、平台 fixture 与真实授权入口完成前，Gate 5 仅为局部完成，Gate 6 不开放。
