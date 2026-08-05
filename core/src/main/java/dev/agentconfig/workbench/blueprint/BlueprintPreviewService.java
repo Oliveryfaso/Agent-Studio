@@ -222,8 +222,8 @@ public final class BlueprintPreviewService {
         requireList(request, missing, "permission", 1);
         requireSingle(request, missing, "risk");
         request.single("name").ifPresent(name -> {
-            if (!name.matches("[a-z0-9-]{1,63}")) {
-                missing.add("name=[a-z0-9-]{1,63}");
+            if (name.length() > 63 || !name.matches("[a-z0-9]+(?:-[a-z0-9]+)*")) {
+                missing.add("name=1-63-hyphen-case-characters");
             }
         });
         request.single("risk").ifPresent(risk -> {

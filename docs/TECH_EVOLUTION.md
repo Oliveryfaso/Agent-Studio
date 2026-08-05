@@ -315,3 +315,11 @@
 - `SkillBlueprint v1` 仅在用户确认 `SKILL + PROJECT` 且必要字段、boundary example、权限/风险与至少 3+3 个去重且不重合的正负触发例完整时构造。Skill 名称复用 S0 `[a-z0-9-]{1,63}` profile；supporting-file 只记录 portable package-relative proposal，不读取或创建目标。
 - Preview 明确是 content-bearing user form，而不是 inventory 的 content-free 报告：`workspaceContentIncluded=false`、`userProvidedContentIncluded=true`、`rawRequestIncluded=false`。同时硬编码 `llmUsed=false`、`writesPerformed=false`、`applyEligible=false`，不生成 `SKILL.md` 候选、不调用网络/子进程/LLM。
 - 新增 20 项 CLI fixture，覆盖六类 triage、Unknown、冲突信号、scope、未确认/不完整/完整 Skill、3+3 与边界冲突、executable 阻断、权限风险、portable supporting path、stdin/UTF-8/预算、错误脱敏、稳定 ID 和零写入。全量本地测试从 181 增至 201，版本化 conformance 保持 27 项；下一活跃切片为 S2 内存 candidate、静态校验与 Diff/Export。
+
+## 2026-08-05：完成 S2 确定性 Codex Skill Draft 与 stdout Export
+
+- 新增 `skill-draft-preview codex` 与 `scripts/run-skill-draft-preview.sh`，复用同一有界向导输入，只在 S1 `BLUEPRINT_READY` 后生成 `.agents/skills/<name>/SKILL.md` 内存候选；不接收目标 workspace，不启动 LLM、网络或子进程，不写文件。
+- `codex-project-skill-template-v1` 只生成 `name` / 单引号安全编码的 `description` frontmatter，并将 trigger/exclusion 写入 always-loaded description；正文采用固定章节，用户值经单行控制字符检查与 Markdown 结构转义。3+3 case 保留在 Blueprint/validation metadata，不塞入运行时正文。
+- `codex-project-skill-static-v1` 对最终 UTF-8/LF bytes、128 KiB 预算、description 预算、canonical path、exact frontmatter、章节顺序和完整 SHA-256 绑定做检查。tools、额外 permission、supporting-file proposal 或 elevated risk 返回 `REVIEW_REQUIRED`，且不生成 supporting content/链接。
+- 默认 JSON 固定 `candidateContentIncluded=false`；只有 `READY` 候选可显式 `--export content|diff|prompt`，`REVIEW_REQUIRED/INVALID` 保持 metadata-only。Diff 使用固定 LF、自带 `SYNTHETIC_NEW_FILE / NOT_CHECKED` 标记并保留全部空行，不能冒充真实目标差异。
+- 终审后将 validator 拆为可独立接收 final candidate bytes 的组件，并加入 canonical-content mutation fixture；补齐 description angle-bracket、Markdown 嵌套结构转义、S2 quoted YAML → S0 inventory 回读、schema/hash/status/完整 checks、review export gate 与 direct API candidate/render budget。新增 14 项 S2 CLI fixture和 1 项 S0 回读回归后，全量本地测试从 201 增至 216，conformance 保持 27 项；下一活跃切片为 S3 单文件目标探测、真实 Diff 与 Simple Apply/Rollback。

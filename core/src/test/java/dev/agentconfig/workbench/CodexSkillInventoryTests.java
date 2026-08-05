@@ -30,6 +30,7 @@ public final class CodexSkillInventoryTests {
     private void runAll() throws Exception {
         run("empty project has a complete empty inventory", this::emptyProject);
         run("valid package exposes metadata and inert executable risk", this::validPackageAndRisk);
+        run("quoted description may contain comment markers", this::quotedDescription);
         run("invalid frontmatter and name mismatch are explicit", this::invalidMetadata);
         run("invalid declared name is redacted from CLI output", this::invalidNameIsRedacted);
         run("valid-looking mismatched name is redacted but still grouped",
@@ -86,6 +87,19 @@ public final class CodexSkillInventoryTests {
             check(skill.risks().contains(CodexSkillInventory.Risk.EXECUTABLE_SUPPORT_FILE),
                     "executable file risk");
             check(!Files.exists(root.resolve("must-not-exist")), "supporting script was executed");
+        });
+    }
+
+    private void quotedDescription() throws Exception {
+        withTempDirectory(root -> {
+            write(root, ".agents/skills/quoted/SKILL.md",
+                    "---\nname: quoted\ndescription: 'Review API: # verify ''contracts''.'\n---\n\n"
+                            + "# quoted\n");
+            CodexSkillInventory inventory = inspect(root);
+            equal(CodexSkillInventory.PackageState.MINIMAL_METADATA_VALID,
+                    inventory.packages().getFirst().state(), "package state");
+            check(!hasFinding(inventory, CodexSkillInventory.FindingCode.INVALID_FRONTMATTER),
+                    "quoted comment marker was treated as a YAML comment");
         });
     }
 

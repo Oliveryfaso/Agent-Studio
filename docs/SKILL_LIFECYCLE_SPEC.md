@@ -254,13 +254,13 @@ Skill lane 现在按一个用户闭环顺序推进，不再与平台 Gate 并行
 |---|---|---|
 | S0 Inventory | Codex Skill package 只读发现、引用图、重复名、可执行风险 | 无 |
 | S1 Blueprint Preview | 自然语言/向导 → persistence classification → `SkillBlueprint v1` | 无 |
-| S2 Validated Draft | 确定性模板或一次可选 LLM 草案、分解预览、静态校验 | 无 |
+| S2 Validated Draft | 确定性单文件模板、最终字节静态校验、stdout content/synthetic-diff/prompt export | 无；已完成 |
 | S3 Single-file Apply/Rollback | 项目内单文件审批、hash recheck、原始字节备份、原子替换和受保护回退 | 明确批准后 |
 | S4 Native asset expansion | 将同一闭环扩展到 AGENTS、Agent TOML 和 Rule/Policy | 逐类型晋级 |
 | S5 Claude lifecycle | Claude Skill 与 instruction 的同等闭环 | 逐类型晋级 |
 | S6 Advanced lifecycle | 其他宿主、Router、eval、history improvement 与跨宿主转换 | 依据用户证据解冻 |
 
-当前 `inspect` 用户入口、S0 Skill Inventory 与 S1 Blueprint Preview 已完成最小纵向切片。S1 使用 `persistence-triage-v1`：自由文本只进入用户明确提供的 goal/description 等字段，分类仅使用显式向导事实；保留 `UNKNOWN/NEEDS_CONFIRMATION`，高风险 executable automation 默认阻断。只有用户确认 `SKILL + PROJECT` 且 name、目标、输入输出、trigger/exclusion/boundary、步骤、完成定义、验证、权限、风险及至少 3+3 正负触发例完整时，才返回 `SkillBlueprint v1`。报告明确区分 `workspaceContentIncluded=false` 与 `userProvidedContentIncluded=true`，并固定 `rawRequestIncluded=false`、`llmUsed=false`、`writesPerformed=false`、`applyEligible=false`。下一活跃 Gate 是 S2 内存候选、静态校验和 Diff/Export。
+当前 `inspect` 用户入口与 Skill S0–S2 已完成最小只读闭环。S1 使用 `persistence-triage-v1`，只有用户确认 `SKILL + PROJECT` 且必要字段、权限风险与至少 3+3 正负触发例完整时返回 `SkillBlueprint v1`。S2 使用 `codex-project-skill-template-v1` 在内存生成一个 `.agents/skills/<name>/SKILL.md`，再由可独立接收 final candidate bytes 的 `codex-project-skill-static-v1` 检查严格 UTF-8/LF、description 安全约束、预算、路径、canonical content 和 hash；默认 JSON 不含候选正文，只有 `READY` 可显式 stdout export content、带 `SYNTHETIC_NEW_FILE / NOT_CHECKED` 标记的 new-file Diff 或 Prompt。`REVIEW_REQUIRED/INVALID` 禁止 raw export。当前没有运行模型路由 eval、LLM 草案、Skill 分解、supporting-file 生成、目标探测或目标写入；这些不能从 3+3 静态契约被推断为已经通过。下一活跃 Gate 是 S3 单文件目标审阅、真实 Diff、Simple Apply/Rollback。
 
 ## 12. 最小产品切片
 
@@ -271,11 +271,11 @@ canonical Gate 4 bounded renderer/validator 纵向切片完成后，开发 **Cod
 3. 推荐 Prompt / AGENTS / Skill / Agent，用户确认；
 4. 输出 `SkillBlueprint v1`；
 5. 确定性模板生成 `.agents/skills/<name>/SKILL.md` 内存候选；
-6. 可选单次 LLM 只生成符合 schema 的候选；
-7. 检查名称、描述、引用、路径、可执行风险和预算；
-8. 运行至少 3 个 should-trigger 与 3 个 should-not-trigger fixture；
-9. 输出 route/eval report、候选预览、Diff 和未决问题；
-10. 停止于 `writesPerformed=false`、`applyEligible=false`。
+6. 对最终候选字节检查名称、description 触发信息、路径、frontmatter、章节、风险和预算；
+7. 保留至少 3 个 should-trigger 与 3 个 should-not-trigger 静态 fixture，但明确 `routingEvalPerformed=false`；
+8. 默认输出不含正文的 metadata，可显式导出正文、synthetic new-file Diff 或 Prompt；
+9. supporting-file 只有路径提案时进入人工审阅，不生成虚假链接或文件；
+10. 停止于 `writesPerformed=false`、`applyEligible=false`。LLM、分解与真实 route eval 延后到有用户证据时再解冻。
 
 这条切片先只支持 Codex project skill，不同时实现跨宿主渲染、历史学习、遗传优化和真实写入。
 

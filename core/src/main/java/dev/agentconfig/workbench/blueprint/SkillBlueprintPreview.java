@@ -184,7 +184,7 @@ public record SkillBlueprintPreview(
             }
             id = required(id, "blueprint id");
             name = required(name, "name");
-            if (!name.matches("[a-z0-9-]{1,63}")) {
+            if (name.length() > 63 || !name.matches("[a-z0-9]+(?:-[a-z0-9]+)*")) {
                 throw new IllegalArgumentException("Skill name must match the Codex inventory profile");
             }
             description = required(description, "description");

@@ -3,7 +3,7 @@
 - 文档版本：1.3
 - 日期：2026-08-05
 - 项目类型：生产型 AI 应用闭环 + Agent 配置治理 + 评测与可观测性
-- 项目阶段：实验室原型 / Codex-first Inspect、S0 Inventory 与 S1 Blueprint Preview 已可运行
+- 项目阶段：实验室原型 / Codex-first Inspect 与 Skill S0–S2 只读闭环已可运行
 - 当前执行范围：`Inspect → Draft → Diff/Export → Simple Apply/Rollback`；其他宿主、通用转换、GitHub、Router 与历史演化暂时冻结
 
 ## 1. 一句话目标
@@ -23,7 +23,7 @@ Codex-first
 
 - 当前顺序支持 Codex Project Skill、`AGENTS.md`、Agent TOML、Rule/Policy；先完成 Skill 全闭环，再扩展后三类。
 - `inspect codex` 已完成第一刀：人类可读、零写入、只显示逻辑路径和结论，不显示正文、hash 或物理路径。
-- S0 Skill Inventory 已完成：只读 package/metadata/risk discovery 与有限的安全 supporting-file 引用图；S1 已完成显式向导信号驱动的 persistence triage 与 `SkillBlueprint v1` preview，当前进入 S2 内存候选、静态校验与 Diff/Export。
+- S0 Skill Inventory 与安全引用图、S1 persistence triage / `SkillBlueprint v1`、S2 确定性内存 `SKILL.md` / 最终字节静态校验 / stdout Export 均已完成。S2 不接收目标工作区，合成 Diff 只以空文件为基线；当前进入 S3 单文件目标审阅、真实 Diff、Simple Apply/Rollback。
 - Claude Code、主流 vibe-coding 宿主、双向转换、GitHub、Skill Router、评测和历史改进仍是长期目标，不取消，但不与核心闭环并行开发。
 - 后文的多宿主平台、研究优化和完整事务设计是长期参考；若与本节的近期顺序冲突，以本节为准。
 
@@ -32,8 +32,8 @@ Codex-first
 | Codex inspect | Active / 第一刀完成 |
 | Codex Skill inventory | Active / S0 完成 |
 | Codex Skill triage / Blueprint | Active / S1 完成 |
-| Codex Skill candidate、validation、diff/export | Next / S2 |
-| 单文件 Simple Apply/Rollback | Queued |
+| Codex Skill candidate、validation、diff/export | Active / S2 完成 |
+| 单文件目标审阅、Simple Apply/Rollback | Next / S3 |
 | Claude 完整闭环 | Queued after Codex validation |
 | 通用 conversion、Git/GitHub、Wave hosts | Frozen |
 | Router、gap、history/evolution、hooks | Research backlog |
@@ -908,13 +908,13 @@ redaction profile + consent scope + retention class
 
 - S0：Codex Skill package 只读 inventory 与引用图。
 - S1：自然语言/向导 → persistence classification → `SkillBlueprint v1`，preview-only。
-- S2：确定性模板、内存候选、静态校验、正负触发例与 Diff/export。
-- S3：项目内单文件 Simple Apply/Rollback。
+- S2：确定性模板、内存候选、最终字节静态校验与 stdout Diff/export。已完成。
+- S3：目标探测、真实 Diff 与项目内单文件 Simple Apply/Rollback。当前下一步。
 - S4：同一闭环扩展到 AGENTS、Agent TOML 与 Rule/Policy。
 - S5：Claude 同等闭环。
 - S6：依据用户证据解冻其他宿主、Router、eval、history 和跨宿主能力。
 
-当前状态：Codex `inspect`、S0 Skill Inventory 与 S1 Blueprint Preview 已完成最小纵向切片。S1 Java 核心只从有界 stdin 接收向导，不接收或扫描 workspace；便捷脚本打开用户显式选择的单个普通非符号链接文件。自由文本只作为用户提供的 Blueprint 字段，分类仅消费显式 recurrence/trigger/success/isolation/enforcement 信号；未确认或不完整请求不产生 Blueprint，高风险 executable automation 被阻断。输出不回显整段原始请求、不调用 LLM、不写目标文件且不可 Apply。旧 Gate 4 conversion 继续作为技术能力记录，不再决定近期产品顺序。详细 gate 见 [SKILL_LIFECYCLE_SPEC.md](SKILL_LIFECYCLE_SPEC.md)。
+当前状态：Codex `inspect` 与 Skill S0–S2 已完成最小只读纵向切片。S1 Java 核心只从有界 stdin 接收向导并输出已确认 Blueprint；S2 把它确定性渲染为内存 `SKILL.md`，验证最终 bytes，默认只输出 content-free candidate metadata，并可显式导出正文、synthetic new-file Diff 或 Prompt。整个 Java 链路不接收或写入目标 workspace、不调用 LLM/网络/子进程且不可 Apply；便捷 launcher 只在本仓库 `build/` 编译 class cache。3+3 仍是静态契约，不是已运行的模型路由 eval。旧 Gate 4 conversion 继续作为技术能力记录，不再决定近期产品顺序。详细 gate 见 [SKILL_LIFECYCLE_SPEC.md](SKILL_LIFECYCLE_SPEC.md)。
 
 ### 当前 Gate 状态（2026-08-05）
 

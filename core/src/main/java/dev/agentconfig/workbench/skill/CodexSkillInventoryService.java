@@ -131,7 +131,8 @@ public final class CodexSkillInventoryService {
             List<NameDeclaration> declarations,
             MutableStatus status) {
         String directoryName = packageDirectory.getFileName().toString();
-        if (!directoryName.matches("[a-z0-9-]{1,63}")) {
+        if (directoryName.length() > 63
+                || !directoryName.matches("[a-z0-9]+(?:-[a-z0-9]+)*")) {
             error(findings, INVALID_PACKAGE_DIRECTORY_NAME, ".agents/skills",
                     "A Skill package directory has a name outside the minimal Codex profile");
             return;
@@ -311,9 +312,9 @@ public final class CodexSkillInventoryService {
         if (name.isBlank()) {
             error(findings, MISSING_NAME, skillPath, "Skill frontmatter has no scalar name");
             valid = false;
-        } else if (!name.matches("[a-z0-9-]{1,63}")) {
+        } else if (name.length() > 63 || !name.matches("[a-z0-9]+(?:-[a-z0-9]+)*")) {
             error(findings, INVALID_NAME, skillPath,
-                    "Skill name must use 1-63 lowercase letters, digits, or hyphens");
+                    "Skill name must use 1-63 lowercase letters or digits separated by hyphens");
             valid = false;
         } else {
             safeName = true;
@@ -512,8 +513,7 @@ public final class CodexSkillInventoryService {
 
     private static String scalar(String raw) {
         if (raw.isEmpty() || raw.equals("|") || raw.equals(">") || raw.startsWith("[")
-                || raw.startsWith("{") || raw.startsWith("&") || raw.startsWith("*")
-                || raw.startsWith("#") || raw.contains(" #")) {
+                || raw.startsWith("{") || raw.startsWith("&") || raw.startsWith("*")) {
             return null;
         }
         if (raw.length() >= 2 && raw.startsWith("\"") && raw.endsWith("\"")) {
@@ -522,6 +522,9 @@ public final class CodexSkillInventoryService {
         }
         if (raw.length() >= 2 && raw.startsWith("'") && raw.endsWith("'")) {
             return raw.substring(1, raw.length() - 1).replace("''", "'");
+        }
+        if (raw.startsWith("#") || raw.contains(" #")) {
+            return null;
         }
         String lower = raw.toLowerCase(Locale.ROOT);
         return Set.of("null", "~", "true", "false", "yes", "no", "on", "off").contains(lower)

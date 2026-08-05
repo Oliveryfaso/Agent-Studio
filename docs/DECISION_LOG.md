@@ -261,6 +261,15 @@
 - 原因：自由文本关键词会被否定、引用、中英混合和“编辑已有 Skill”的一次性请求击穿；显式向导信号虽然需要多一步交互，却能提供稳定证据、保守降级和可测试的 UI/API 合同。
 - 放弃：用关键词或单次 LLM 输出直接决定持久化类型；为不完整 Skill 构造伪 Blueprint；把 Prompt/Instruction/Agent/Tool 请求强塞进 `SkillBlueprint`。
 
+## ADR-031：S2 采用确定性单文件 renderer 与显式 stdout 导出
+
+- 日期：2026-08-05
+- 状态：接受
+- 决定：S2 只消费已确认的 `SkillBlueprint v1`，用版本化确定性模板在内存生成一个 Codex project `SKILL.md`，并让独立静态 validator 检查最终 bytes。默认 JSON 只含 candidate metadata/hash；正文、synthetic new-file Diff 与 Prompt 必须通过显式 stdout export 请求。
+- 内容与风险边界：frontmatter 只有 `name` 和包含 trigger/exclusion 的 `description`；3+3 fixture 不进入运行时正文，也不被宣称为真实模型路由 eval。只有路径的 supporting-file proposal、tools、额外 permission 或 elevated risk 进入 `REVIEW_REQUIRED` 并禁止 raw export。本阶段不读取或写入目标、不生成 supporting content、不运行 LLM/网络/进程；便捷 launcher 只在本仓库 `build/` 编译 class cache。
+- 原因：先证明 Blueprint 能稳定变成可审阅的原生字节，比同时引入模型起草、分解、多宿主 renderer 或写入事务更直接验证核心用户价值；默认不输出正文也保持与既有 metadata-first 治理合同一致。
+- 放弃：S2 引入通用 Skill IR/renderer registry、Markdown AST/YAML 依赖、真实目标三方 Diff、LLM provider、Router/eval runner、自动 supporting file 或 Apply。
+
 ## 待决问题
 
 - [ ] 为正式工程选择 Java 构建工具与最小模块骨架；当前纯 JDK 脚本仅服务 Phase 1 spike。

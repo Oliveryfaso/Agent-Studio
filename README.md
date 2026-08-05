@@ -4,7 +4,7 @@ GitHub: [Oliveryfaso/Agent-Studio](https://github.com/Oliveryfaso/Agent-Studio)
 
 Agent Config Workbench（智能体配置工作台）的长期目标，是在 Codex、Claude Code 和主流 vibe-coding 工具之间管理、生成、转换并安全应用 instructions、skills、rules 和 agents。当前实施刻意收敛为 Codex-first 的 `Inspect → Draft → Diff/Export → Simple Apply/Rollback` 单资产闭环；其他宿主、通用转换、GitHub、Router 和历史演化在核心用户价值验证前保持冻结。
 
-当前状态：**实验室原型，Codex-first 的 Inspect、S0 Skill Inventory 与 S1 Blueprint Preview 已可运行**。仓库已有零依赖的 Java 21 只读扫描器、Codex / Claude Code 项目级 Effective Instruction Chain、Instruction IR 分析和窄转换实验；`inspect` 解释当前目录真正生效的 Codex 项目指令，`skill-inventory` 只读列出 Codex Skill package 与安全引用图，`skill-blueprint-preview` 则把一个有界向导请求确定性分类为 Prompt / Instruction / Skill / Agent / Tool-Policy / 高风险执行提案，并仅在用户确认 project Skill 且字段完整时输出 `SkillBlueprint v1`。候选 `SKILL.md` 正文、Vue、Diff/Export、Simple Apply/Rollback 和 AI 起草仍未实现。
+当前状态：**实验室原型，Codex-first 的 Inspect 与 Skill S0–S2 只读闭环已可运行**。仓库已有零依赖的 Java 21 治理内核；`skill-blueprint-preview` 将有界向导请求分类并形成 `SkillBlueprint v1`，`skill-draft-preview` 再确定性生成内存 `SKILL.md`、校验最终字节，并支持正文、合成 new-file Diff 与 Prompt 的 stdout 导出。它不接收目标工作区、不调用 LLM、网络或子进程，也不写文件；Simple Apply/Rollback、Vue 和可选 AI 起草仍未实现。
 
 ## 当前产品焦点
 
@@ -58,7 +58,8 @@ Claude Code 与其他宿主仍保留在长期路线中；现有 conversion、Git
 - `inspect codex` 将 Context 与 Analyze 投影为中文摘要，默认不输出正文、hash、source ID 或 `realPath`，并固定说明零写入。
 - `skill-inventory codex` 只检查根级 `.agents/skills/<name>/SKILL.md`：读取有上限的 UTF-8 frontmatter 与正文内联引用，输出 schema v2 的逻辑路径、hash、大小、最小字段状态、supporting-file 数量、风险和安全引用图。`codex-skill-inline-reference-v1` 支持包内 `[link](relative)` / `![image](relative)`、angle path、query 与 fragment；不宣称 full CommonMark。只有 `RESOLVED` edge 暴露 target logical path；`MISSING/UNKNOWN` 只保留 source、line/column、类型与状态。supporting files 只枚举路径，不读取或执行内容，报告固定 `contentIncluded=false`、`writesPerformed=false`。
 - `skill-blueprint-preview codex` 从 stdin 读取不超过 32 KiB 的严格 UTF-8 向导；Java 核心不接收 workspace 路径。便捷脚本只打开用户显式选择的单个普通非符号链接文件。自然语言只进入显式 goal/description 等 Blueprint 字段，分类只使用 recurrence/trigger/success/isolation/enforcement 等向导事实，不使用关键词猜测。输出固定 `workspaceContentIncluded=false`、`userProvidedContentIncluded=true`、`rawRequestIncluded=false`、`llmUsed=false`、`writesPerformed=false`、`applyEligible=false`；未确认、缺字段和高风险自动化退出 3 且不生成 Blueprint。
-- Ubuntu、macOS、Windows 三平台 CI 基线已真实通过并持续复验；当前本地 201 项测试用例全部通过，其中版本化 conformance 为 27 项。每次变更仍以对应远端 CI run 为合并依据。
+- `skill-draft-preview codex` 复用同一向导输入，仅接受 `BLUEPRINT_READY` 的 Codex project Skill。`codex-project-skill-template-v1` 生成只有 `name` / `description` frontmatter 的单文件候选；触发与排除被写入 description，正文采用固定 progressive-disclosure 章节并转义用户 Markdown 结构。独立的 `codex-project-skill-static-v1` 对最终 UTF-8/LF 字节、description 安全约束、预算、路径、canonical content 和 hash 绑定做检查。默认 JSON 不含正文；只有 `READY` 候选可用 `--export content|diff|prompt` 显式输出。Diff 自带 `SYNTHETIC_NEW_FILE / NOT_CHECKED` 标记并以 `/dev/null` 为基线，不代表检查过磁盘目标；tools、额外权限、supporting-file proposal 或非 LOW risk 返回 `REVIEW_REQUIRED`，且 raw export 被阻断。
+- Ubuntu、macOS、Windows 三平台 CI 基线已真实通过并持续复验；当前本地 216 项测试用例全部通过，其中版本化 conformance 为 27 项。每次变更仍以对应远端 CI run 为合并依据。
 
 需要 JDK 21。当前 spike 不依赖 Gradle、Maven 或第三方库：
 
@@ -69,6 +70,10 @@ scripts/inspect-codex.sh /absolute/path/to/authorized-workspace
 scripts/inspect-codex.sh /absolute/path/to/authorized-workspace /absolute/path/to/authorized-workspace/subdir
 scripts/run-skill-inventory.sh /absolute/path/to/authorized-workspace
 scripts/run-skill-blueprint-preview.sh /absolute/path/to/request.intent
+scripts/run-skill-draft-preview.sh /absolute/path/to/request.intent
+scripts/run-skill-draft-preview.sh /absolute/path/to/request.intent --export content
+scripts/run-skill-draft-preview.sh /absolute/path/to/request.intent --export diff
+scripts/run-skill-draft-preview.sh /absolute/path/to/request.intent --export prompt
 scripts/run-cli.sh /absolute/path/to/authorized-workspace
 scripts/run-cli.sh /absolute/path/to/authorized-workspace --git-metadata
 scripts/run-context.sh codex /absolute/path/to/authorized-workspace /absolute/path/to/authorized-workspace/subdir
@@ -87,7 +92,7 @@ scripts/run-convert-preview.sh claude-code codex /absolute/path/to/authorized-wo
 
 ### S1 向导文件示例
 
-向导使用 `key: value`，可重复的键包括 `input`、`output`、`trigger`、`exclusion`、`boundary-example`、`should-trigger`、`should-not-trigger`、`step`、`validation`、`tool`、`permission` 与 `supporting-file`。下面是能产生完整 Blueprint 的最小形状；它只生成 JSON 预览，不生成或写入 `SKILL.md`：
+向导使用 `key: value`，可重复的键包括 `input`、`output`、`trigger`、`exclusion`、`boundary-example`、`should-trigger`、`should-not-trigger`、`step`、`validation`、`tool`、`permission` 与 `supporting-file`。下面是能产生完整 Blueprint 和 `READY` S2 草案的最小形状；两个命令都不写入 `SKILL.md`：
 
 ```text
 repeated-workflow: true
@@ -115,8 +120,11 @@ completion: Every changed contract has a result.
 validation: Every finding cites an input file.
 permission: NONE
 risk: LOW
-supporting-file: references/checklist.md
 ```
+
+加入 `supporting-file` 只会记录尚未生成的 package-relative proposal，并令 S2 返回 `REVIEW_REQUIRED`；本阶段不会生成虚假链接或 supporting file 内容。
+
+Java 命令本身不写目标工作区；便捷脚本会在本仓库 `build/` 下编译临时 class cache，但不会改动向导文件或任何候选目标目录。
 
 其他分类信号为 `duration: one-shot|persistent`、`isolated-context`、`independent-responsibility`、`special-tool-boundary`、`deterministic-enforcement` 和 `executable-automation`。布尔值只接受 `true|false`；executable automation 的优先级最高并默认阻断。
 
@@ -132,4 +140,4 @@ supporting-file: references/checklist.md
 
 ## 下一里程碑
 
-S1 persistence triage 与 `SkillBlueprint v1` preview 已完成最小纵向切片。下一步进入 S2：由已确认 Blueprint 生成有界的内存 `SKILL.md` 候选，执行静态检查并提供 Diff/Export，全程仍零目标写入。完成真实用户验证后再实现单文件 Simple Apply/Rollback；不并行扩展通用转换、更多宿主、Router 或历史演化。
+S2 确定性 `SKILL.md` 内存候选、最终字节静态检查与 stdout Diff/Export 已完成。下一步进入 S3：为单个、明确授权的 Codex project Skill 实现目标探测、真实 Diff、Simple Apply 与受保护 Rollback；不并行扩展通用转换、更多宿主、Router、LLM 起草或历史演化。

@@ -28,6 +28,8 @@ import dev.agentconfig.workbench.scan.ScanResult;
 import dev.agentconfig.workbench.scan.Severity;
 import dev.agentconfig.workbench.skill.CodexSkillInventory;
 import dev.agentconfig.workbench.skill.CodexSkillInventoryService;
+import dev.agentconfig.workbench.skilldraft.CodexSkillDraftPreview;
+import dev.agentconfig.workbench.skilldraft.CodexSkillDraftService;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.PrintWriter;
@@ -70,7 +72,43 @@ public final class Cli {
         if (args.length > 0 && "skill-blueprint-preview".equals(args[0])) {
             return runSkillBlueprintPreview(args, input, output, error);
         }
+        if (args.length > 0 && "skill-draft-preview".equals(args[0])) {
+            return runSkillDraftPreview(args, input, output, error);
+        }
         return runScan(args, output, error);
+    }
+
+    private int runSkillDraftPreview(
+            String[] args, InputStream input, PrintWriter output, PrintWriter error) {
+        boolean metadata = args.length == 2;
+        boolean export = args.length == 4 && "--export".equals(args[2])
+                && List.of("content", "diff", "prompt").contains(args[3]);
+        if ((!metadata && !export) || !"codex".equals(args[1])) {
+            usage(error);
+            return 2;
+        }
+        try {
+            SkillBlueprintPreview source = new BlueprintPreviewService().preview(input);
+            CodexSkillDraftPreview preview = new CodexSkillDraftService().draft(source);
+            if (metadata || preview.status() != CodexSkillDraftPreview.Status.READY) {
+                CodexSkillDraftWriter.writeMetadata(preview, output);
+            } else {
+                CodexSkillDraftPreview.Candidate candidate = preview.candidate().orElseThrow();
+                switch (args[3]) {
+                    case "content" -> CodexSkillDraftWriter.writeContent(candidate, output);
+                    case "diff" -> CodexSkillDraftWriter.writeSyntheticDiff(candidate, output);
+                    case "prompt" -> CodexSkillDraftWriter.writePrompt(candidate, output);
+                    default -> throw new IllegalStateException("validated export mode missing");
+                }
+            }
+            return preview.status() == CodexSkillDraftPreview.Status.READY ? 0 : 3;
+        } catch (IllegalArgumentException exception) {
+            error.println("Skill draft preview request rejected: " + exception.getMessage());
+            return 2;
+        } catch (IOException exception) {
+            error.println("Skill draft preview failed: " + exception.getClass().getSimpleName());
+            return 2;
+        }
     }
 
     private int runSkillBlueprintPreview(
@@ -340,8 +378,11 @@ public final class Cli {
         error.println("   or: agent-config-workbench skill-inventory codex <authorized-workspace>");
         error.println("   or: agent-config-workbench skill-blueprint-preview codex"
                 + " < bounded-guided-request.intent");
+        error.println("   or: agent-config-workbench skill-draft-preview codex"
+                + " [--export <content|diff|prompt>] < bounded-guided-request.intent");
         error.println("Workspace inspection commands never write to or execute discovered content.");
         error.println("Blueprint preview may echo bounded user form fields, but reads no workspace content.");
+        error.println("Skill draft exports are stdout-only and never inspect or write a target workspace.");
         error.println("Git administrative metadata is not inspected unless --git-metadata is supplied.");
     }
 }
