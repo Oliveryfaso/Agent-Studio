@@ -2,7 +2,7 @@
 
 ## Project status
 
-- This project is a lab prototype whose active delivery path is Codex-first: `Inspect -> Draft -> Diff/Export -> Simple Apply/Rollback`. Codex `inspect` and Skill S0-S2 now exist. S3a proves the transaction protocol only through an internal API that accepts explicitly marked temporary fixture roots; it must not be exposed as ordinary-workspace Apply or counted as Gate 6. The next slice is durable recovery and a hardened authorization boundary. Vue, optional AI, generic conversion, additional hosts, router, and history evolution remain unimplemented or frozen backlog.
+- This project is a lab prototype whose active delivery path is Codex-first: `Inspect -> Draft -> Diff/Export -> Simple Apply/Rollback`. Codex `inspect` and Skill S0-S2 now exist. S3a proves fixture transactions and S3b1 adds fixture-only apply process-crash recovery through `COMMIT_INTENT`; neither may be exposed as ordinary-workspace Apply or counted as Gate 6. Next add rollback recovery and bounded pending-transaction discovery, while keeping power-loss durability and OS-level CAS/TOCTOU explicit blockers.
 - Read `docs/PROJECT_GUIDE.md` before changing product behavior or architecture.
 - Do not scaffold frameworks or add dependencies unless the current task explicitly asks for them.
 
@@ -78,7 +78,7 @@ Build a local-first Skills lifecycle assistant that creates, organizes, routes, 
 - Run `scripts/run-conformance.sh` after changing Codex/Claude project semantics or analyzer classification. Its stdout is a machine-readable schema v1 report; suite logs go to stderr. Preserve the existing semantic profile IDs unless behavior intentionally changes and receives a new profile.
 - Run `scripts/run-convert-preview.sh <codex|claude-code> <claude-code|codex> <fixture-root> <cwd>` for ConversionPlan schema v2. It must remain content-free in JSON and write-disabled; `PARTIAL` IR must not produce a normal plan, unsafe/stale target paths exit 3, validation evidence must bind the candidate hash, and `NOT_RUN` must never be treated as success.
 - Run `scripts/run-skill-draft-preview.sh <guided-request.intent> [--export <content|diff|prompt>]` for S2. Default JSON must remain candidate-content-free; exports are stdout-only, never probe a target, never start an LLM/network/process, and never write. Do not present the synthetic `/dev/null` Diff as a real workspace Diff.
-- S3a has no launcher or CLI. Exercise it only through `FixtureSkillTransactionTests`; preserve both exact fixture marker checks and the separate marked state root. Do not add an ordinary-workspace call path until the remaining Gate 5 recovery and platform blockers are resolved.
+- S3 has no launcher or CLI. Exercise it only through `FixtureSkillTransactionTests`; preserve exact fixture markers, the separate state root, manifest integrity, intent-before-move ordering and content-free receipts. Do not add an ordinary-workspace call path until the remaining Gate 5 recovery and platform blockers are resolved.
 - Treat only equal effective-payload hash and length as a deterministic exact duplicate. Normalized directive duplicates and direct polarity conflicts are heuristic candidates and must remain labeled as such.
 - Git metadata must remain opt-in through `--git-metadata`; never execute Git or claim dirty/clean state from the minimal metadata probe.
 - Add fixture-based tests before touching real configuration directories.

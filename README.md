@@ -4,7 +4,7 @@ GitHub: [Oliveryfaso/Agent-Studio](https://github.com/Oliveryfaso/Agent-Studio)
 
 Agent Config Workbench（智能体配置工作台）的长期目标，是在 Codex、Claude Code 和主流 vibe-coding 工具之间管理、生成、转换并安全应用 instructions、skills、rules 和 agents。当前实施刻意收敛为 Codex-first 的 `Inspect → Draft → Diff/Export → Simple Apply/Rollback` 单资产闭环；其他宿主、通用转换、GitHub、Router 和历史演化在核心用户价值验证前保持冻结。
 
-当前状态：**实验室原型，Codex-first 的 Inspect 与 Skill S0–S2 只读闭环已可运行，S3a 事务协议已在专用临时 fixture 中验证**。仓库已有零依赖的 Java 21 治理内核；S1/S2 可形成并静态验证内存 `SKILL.md`，S3a 内部 API 则为带专用 marker 的测试工作区探测真实目标、生成精确替换 Diff，并验证审批绑定、外置快照、原子替换、故障后自动恢复和 hash-guard rollback。S3a 没有 CLI，也拒绝普通项目，因此真实工作区 Apply、崩溃恢复、Vue 和可选 AI 起草仍未实现。
+当前状态：**实验室原型，Codex-first 的 Inspect 与 Skill S0–S2 已可运行，S3a 事务与 S3b1 apply 进程崩溃恢复已在专用临时 fixture 中验证**。仓库已有零依赖的 Java 21 治理内核；S1/S2 可形成并静态验证内存 `SKILL.md`，fixture 内部 API 可探测真实目标、生成精确替换 Diff，并验证审批绑定、外置快照、原子替换、hash-guard rollback。S3b1 又在 move 前持久化 `COMMIT_INTENT`，可幂等完成或确认中断的 apply。它没有 CLI，也拒绝普通项目；不保证断电持久性、rollback 中断恢复或并发路径安全，因此真实工作区 Apply、Vue 和可选 AI 起草仍未实现。
 
 ## 当前产品焦点
 
@@ -59,8 +59,8 @@ Claude Code 与其他宿主仍保留在长期路线中；现有 conversion、Git
 - `skill-inventory codex` 只检查根级 `.agents/skills/<name>/SKILL.md`：读取有上限的 UTF-8 frontmatter 与正文内联引用，输出 schema v2 的逻辑路径、hash、大小、最小字段状态、supporting-file 数量、风险和安全引用图。`codex-skill-inline-reference-v1` 支持包内 `[link](relative)` / `![image](relative)`、angle path、query 与 fragment；不宣称 full CommonMark。只有 `RESOLVED` edge 暴露 target logical path；`MISSING/UNKNOWN` 只保留 source、line/column、类型与状态。supporting files 只枚举路径，不读取或执行内容，报告固定 `contentIncluded=false`、`writesPerformed=false`。
 - `skill-blueprint-preview codex` 从 stdin 读取不超过 32 KiB 的严格 UTF-8 向导；Java 核心不接收 workspace 路径。便捷脚本只打开用户显式选择的单个普通非符号链接文件。自然语言只进入显式 goal/description 等 Blueprint 字段，分类只使用 recurrence/trigger/success/isolation/enforcement 等向导事实，不使用关键词猜测。输出固定 `workspaceContentIncluded=false`、`userProvidedContentIncluded=true`、`rawRequestIncluded=false`、`llmUsed=false`、`writesPerformed=false`、`applyEligible=false`；未确认、缺字段和高风险自动化退出 3 且不生成 Blueprint。
 - `skill-draft-preview codex` 复用同一向导输入，仅接受 `BLUEPRINT_READY` 的 Codex project Skill。`codex-project-skill-template-v1` 生成只有 `name` / `description` frontmatter 的单文件候选；触发与排除被写入 description，正文采用固定 progressive-disclosure 章节并转义用户 Markdown 结构。独立的 `codex-project-skill-static-v1` 对最终 UTF-8/LF 字节、description 安全约束、预算、路径、canonical content 和 hash 绑定做检查。默认 JSON 不含正文；只有 `READY` 候选可用 `--export content|diff|prompt` 显式输出。Diff 自带 `SYNTHETIC_NEW_FILE / NOT_CHECKED` 标记并以 `/dev/null` 为基线，不代表检查过磁盘目标；tools、额外权限、supporting-file proposal 或非 LOW risk 返回 `REVIEW_REQUIRED`，且 raw export 被阻断。
-- S3a `FixtureSkillTransactionService` 只接受 marker 内容精确匹配的临时 fixture，并要求独立 marker state root。它支持 absent/existing/no-op/blocked 探测、真实完整替换 Diff、candidate/preimage/root/diff 审批绑定、写前 stale recheck、外置原始字节快照、同目录 staging、原子 move、写后 hash 验证、故障注入、自动恢复与只在当前 hash 仍等于本事务 candidate 时执行的 rollback。它没有公开 CLI，不能用于普通项目，也没有 durable journal、启动恢复或 Windows junction 完整证明。
-- Ubuntu、macOS、Windows 三平台 CI 基线已真实通过并持续复验；当前本地 230 项测试用例全部通过，其中版本化 conformance 为 27 项。每次变更仍以对应远端 CI run 为合并依据。
+- S3 fixture transaction 只接受 marker 内容精确匹配的临时 workspace，并要求独立 marker state root。S3b1 manifest v2 增加完整性/字段校验和 `PREPARED → COMMIT_INTENT → APPLIED` 状态；确定性 stage 与 `recoverTransaction` 可区分“intent 后尚未 move”和“move 后 APPLIED 未落盘”，恢复只在 hash/快照/拓扑一致时完成或补记 apply。receipt 分开记录本次目标写与状态写。它没有公开 CLI，不能用于普通项目，也没有断电级 directory fsync、rollback intent、启动批量恢复、OS 级 CAS/防 TOCTOU 或 Windows junction 完整证明。
+- Ubuntu、macOS、Windows 三平台 CI 基线已真实通过并持续复验；当前本地 241 项测试用例全部通过，其中版本化 conformance 为 27 项。每次变更仍以对应远端 CI run 为合并依据。
 
 需要 JDK 21。当前 spike 不依赖 Gradle、Maven 或第三方库：
 
@@ -141,4 +141,4 @@ Java 命令本身不写目标工作区；便捷脚本会在本仓库 `build/` �
 
 ## 下一里程碑
 
-S3a 已在不可误用为普通项目的临时 fixture 中证明单文件事务主路径。下一步是 S3b：补齐可持久恢复的事务状态、目标内容与路径组件的 OS 级 CAS/dir-handle-relative 防 TOCTOU（包括并发 symlink/junction swap）和 Windows reparse/junction fixture，再设计明确授权的真实工作区入口；在这些条件满足前不开放 Gate 6 Apply，也不并行扩展通用转换、更多宿主、Router、LLM 起草或历史演化。
+S3b1 已闭合 apply 的“move 成功、APPLIED 尚未落盘”进程崩溃窗口。下一步是 S3b2：为 rollback 增加对称 intent/recovery，并加入有界启动恢复枚举；随后仍需解决目标内容与路径组件的 OS 级 CAS/dir-handle-relative 防 TOCTOU（包括并发 symlink/junction swap）和 Windows reparse/junction fixture。在这些条件满足前不开放 Gate 6 Apply。

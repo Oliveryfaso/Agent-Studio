@@ -5,6 +5,7 @@ import dev.agentconfig.workbench.skilldraft.CodexSkillDraftPreview;
 import dev.agentconfig.workbench.skilldraft.CodexSkillDraftService;
 import dev.agentconfig.workbench.transaction.FixtureSkillApplyReceipt;
 import dev.agentconfig.workbench.transaction.FixtureSkillChangePlan;
+import dev.agentconfig.workbench.transaction.FixtureSkillRecoveryReceipt;
 import dev.agentconfig.workbench.transaction.FixtureSkillRollbackReceipt;
 import dev.agentconfig.workbench.transaction.FixtureSkillTransactionService;
 import dev.agentconfig.workbench.transaction.PreparedFixtureSkillChange;
@@ -14,6 +15,8 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.attribute.BasicFileAttributes;
+import java.nio.file.attribute.FileTime;
 import java.nio.file.attribute.PosixFilePermission;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -48,6 +51,22 @@ public final class FixtureSkillTransactionTests {
         run("faults before and after move preserve preimage", this::failureInjection);
         run("prepared transaction cannot roll back a later matching edit",
                 this::preparedTransactionCannotRollback);
+        run("commit intent recovery completes replace", this::recoverCommitIntentReplace);
+        run("move gap recovery finalizes create", this::recoverMoveGapCreate);
+        run("prepared recovery aborts without target write", this::recoverPrepared);
+        run("ambiguous recovery preserves external edit", this::ambiguousRecovery);
+        run("recovery rejects corrupt snapshot", this::recoveryRejectsCorruptSnapshot);
+        run("recovery rejects corrupt manifest", this::recoveryRejectsCorruptManifest);
+        run("recovery rejects linked stage without reading destination",
+                this::recoveryRejectsLinkedStage);
+        run("recovery rejects same-byte preimage identity change",
+                this::recoveryRejectsIdentityChange);
+        run("existing move gap finalizes and remains rollbackable",
+                this::recoverMoveGapExisting);
+        run("applied recovery does not promise a missing snapshot",
+                this::appliedRecoveryRequiresSnapshot);
+        run("recovery rejects candidate stage permission drift",
+                this::recoveryRejectsStagePermissionDrift);
         run("rollback hash guard preserves later edits", this::rollbackHashGuard);
         run("corrupt snapshot blocks rollback", this::corruptSnapshot);
         System.out.printf("Fixture Skill transaction tests: %d passed, %d skipped%n", passed, skipped);
@@ -260,9 +279,229 @@ public final class FixtureSkillTransactionTests {
             Files.write(fixture.target(), fixture.candidateBytes());
             FixtureSkillRollbackReceipt rollback = fixture.service().rollback(
                     fixture.workspace(), fixture.state(), tx);
-            equal(FixtureSkillRollbackReceipt.Status.SNAPSHOT_INVALID,
+            equal(FixtureSkillRollbackReceipt.Status.RECOVERY_REQUIRED,
                     rollback.status(), "status");
             check(Files.exists(fixture.target()), "later matching file was deleted");
+        });
+    }
+
+    private void recoverCommitIntentReplace() throws Exception {
+        withFixture(fixture -> {
+            byte[] original = "old\n".getBytes(StandardCharsets.UTF_8);
+            Files.write(fixture.target(), original);
+            FixtureSkillApplyReceipt interrupted = fixture.apply(fixture.preview(),
+                    FixtureSkillTransactionService.FailurePoint.AFTER_COMMIT_INTENT);
+            equal(FixtureSkillApplyReceipt.Status.RECOVERY_REQUIRED,
+                    interrupted.status(), "interrupted");
+            check(!interrupted.writesPerformed(), "intent claimed target write");
+            equal("old\n", Files.readString(fixture.target()), "preimage");
+            String tx = interrupted.transactionId().orElseThrow();
+            FixtureSkillRecoveryReceipt recovered = new FixtureSkillTransactionService()
+                    .recoverTransaction(fixture.workspace(), fixture.state(), tx);
+            equal(FixtureSkillRecoveryReceipt.Status.COMPLETED_APPLY,
+                    recovered.status(), "recovery");
+            check(recovered.targetWritesPerformed(), "recovery hid target write");
+            check(java.util.Arrays.equals(fixture.candidateBytes(),
+                    Files.readAllBytes(fixture.target())), "candidate");
+            FixtureSkillRollbackReceipt rollback = fixture.service().rollback(
+                    fixture.workspace(), fixture.state(), tx);
+            equal(FixtureSkillRollbackReceipt.Status.ROLLED_BACK, rollback.status(), "rollback");
+            check(java.util.Arrays.equals(original, Files.readAllBytes(fixture.target())),
+                    "rollback preimage");
+        });
+    }
+
+    private void recoverMoveGapCreate() throws Exception {
+        withFixture(fixture -> {
+            FixtureSkillApplyReceipt interrupted = fixture.apply(fixture.preview(),
+                    FixtureSkillTransactionService.FailurePoint
+                            .AFTER_MOVE_BEFORE_APPLIED_MANIFEST);
+            equal(FixtureSkillApplyReceipt.Status.RECOVERY_REQUIRED,
+                    interrupted.status(), "interrupted");
+            check(interrupted.writesPerformed(), "move gap hid target write");
+            BasicFileAttributes before = Files.readAttributes(fixture.target(),
+                    BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+            String tx = interrupted.transactionId().orElseThrow();
+            FixtureSkillRecoveryReceipt recovered = new FixtureSkillTransactionService()
+                    .recoverTransaction(fixture.workspace(), fixture.state(), tx);
+            equal(FixtureSkillRecoveryReceipt.Status.FINALIZED_APPLY,
+                    recovered.status(), "recovery");
+            check(!recovered.targetWritesPerformed(), "finalize rewrote target");
+            BasicFileAttributes after = Files.readAttributes(fixture.target(),
+                    BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+            equal(before.fileKey(), after.fileKey(), "fileKey");
+            equal(before.lastModifiedTime(), after.lastModifiedTime(), "mtime");
+            FixtureSkillRecoveryReceipt repeated = fixture.service().recoverTransaction(
+                    fixture.workspace(), fixture.state(), tx);
+            equal(FixtureSkillRecoveryReceipt.Status.ALREADY_APPLIED,
+                    repeated.status(), "repeat");
+            FixtureSkillRollbackReceipt rollback = fixture.service().rollback(
+                    fixture.workspace(), fixture.state(), tx);
+            equal(FixtureSkillRollbackReceipt.Status.ROLLED_BACK, rollback.status(), "rollback");
+            check(!Files.exists(fixture.target(), LinkOption.NOFOLLOW_LINKS), "created target");
+        });
+    }
+
+    private void recoverPrepared() throws Exception {
+        withFixture(fixture -> {
+            FixtureSkillApplyReceipt interrupted = fixture.apply(fixture.preview(),
+                    FixtureSkillTransactionService.FailurePoint.AFTER_SNAPSHOT);
+            String tx = interrupted.transactionId().orElseThrow();
+            FixtureSkillRecoveryReceipt recovered = fixture.service().recoverTransaction(
+                    fixture.workspace(), fixture.state(), tx);
+            equal(FixtureSkillRecoveryReceipt.Status.ABORTED_PREPARED,
+                    recovered.status(), "recovery");
+            check(!recovered.targetWritesPerformed(), "abort wrote target");
+            check(!Files.exists(fixture.target()), "abort created target");
+            FixtureSkillRecoveryReceipt repeated = fixture.service().recoverTransaction(
+                    fixture.workspace(), fixture.state(), tx);
+            equal(FixtureSkillRecoveryReceipt.Status.ALREADY_ABORTED,
+                    repeated.status(), "repeat");
+        });
+    }
+
+    private void ambiguousRecovery() throws Exception {
+        withFixture(fixture -> {
+            Files.writeString(fixture.target(), "old\n", StandardCharsets.UTF_8);
+            FixtureSkillApplyReceipt interrupted = fixture.apply(fixture.preview(),
+                    FixtureSkillTransactionService.FailurePoint.AFTER_COMMIT_INTENT);
+            Files.writeString(fixture.target(), "external edit\n", StandardCharsets.UTF_8);
+            FixtureSkillRecoveryReceipt recovered = fixture.service().recoverTransaction(
+                    fixture.workspace(), fixture.state(), interrupted.transactionId().orElseThrow());
+            equal(FixtureSkillRecoveryReceipt.Status.RECOVERY_REQUIRED,
+                    recovered.status(), "recovery");
+            check(!recovered.stateWritesPerformed(), "ambiguous state advanced");
+            equal("external edit\n", Files.readString(fixture.target()), "external edit");
+        });
+    }
+
+    private void recoveryRejectsCorruptSnapshot() throws Exception {
+        withFixture(fixture -> {
+            Files.writeString(fixture.target(), "old\n", StandardCharsets.UTF_8);
+            FixtureSkillApplyReceipt interrupted = fixture.apply(fixture.preview(),
+                    FixtureSkillTransactionService.FailurePoint
+                            .AFTER_MOVE_BEFORE_APPLIED_MANIFEST);
+            String tx = interrupted.transactionId().orElseThrow();
+            Files.writeString(fixture.state().resolve(tx).resolve("preimage.bin"),
+                    "corrupt\n", StandardCharsets.UTF_8);
+            FixtureSkillRecoveryReceipt recovered = fixture.service().recoverTransaction(
+                    fixture.workspace(), fixture.state(), tx);
+            equal(FixtureSkillRecoveryReceipt.Status.RECOVERY_REQUIRED,
+                    recovered.status(), "recovery");
+            check(java.util.Arrays.equals(fixture.candidateBytes(),
+                    Files.readAllBytes(fixture.target())), "target changed");
+        });
+    }
+
+    private void recoveryRejectsCorruptManifest() throws Exception {
+        withFixture(fixture -> {
+            FixtureSkillApplyReceipt interrupted = fixture.apply(fixture.preview(),
+                    FixtureSkillTransactionService.FailurePoint.AFTER_SNAPSHOT);
+            String tx = interrupted.transactionId().orElseThrow();
+            Files.writeString(fixture.state().resolve(tx).resolve("manifest.bin"),
+                    "not a manifest\n", StandardCharsets.UTF_8);
+            FixtureSkillRecoveryReceipt recovered = fixture.service().recoverTransaction(
+                    fixture.workspace(), fixture.state(), tx);
+            equal(FixtureSkillRecoveryReceipt.Status.INVALID_TRANSACTION,
+                    recovered.status(), "recovery");
+            check(!Files.exists(fixture.target()), "invalid manifest wrote target");
+        });
+    }
+
+    private void recoveryRejectsLinkedStage() throws Exception {
+        withFixture(fixture -> {
+            FixtureSkillApplyReceipt interrupted = fixture.apply(fixture.preview(),
+                    FixtureSkillTransactionService.FailurePoint.AFTER_COMMIT_INTENT);
+            String tx = interrupted.transactionId().orElseThrow();
+            Path stage = fixture.target().getParent().resolve(
+                    ".acw-s3-stage-" + tx + ".tmp");
+            Files.delete(stage);
+            Path outside = Files.writeString(fixture.base().resolve("outside-stage.txt"),
+                    "external secret\n", StandardCharsets.UTF_8);
+            if (!trySymlink(stage, outside)) {
+                skip("symlink unsupported");
+                return;
+            }
+            FixtureSkillRecoveryReceipt recovered = fixture.service().recoverTransaction(
+                    fixture.workspace(), fixture.state(), tx);
+            equal(FixtureSkillRecoveryReceipt.Status.RECOVERY_REQUIRED,
+                    recovered.status(), "recovery");
+            equal("external secret\n", Files.readString(outside), "outside");
+            check(!recovered.toString().contains("secret"), "receipt leaked linked content");
+        });
+    }
+
+    private void recoveryRejectsIdentityChange() throws Exception {
+        withFixture(fixture -> {
+            Files.writeString(fixture.target(), "old\n", StandardCharsets.UTF_8);
+            FixtureSkillApplyReceipt interrupted = fixture.apply(fixture.preview(),
+                    FixtureSkillTransactionService.FailurePoint.AFTER_COMMIT_INTENT);
+            FileTime changed = FileTime.fromMillis(
+                    Files.getLastModifiedTime(fixture.target()).toMillis() + 2_000);
+            Files.setLastModifiedTime(fixture.target(), changed);
+            FixtureSkillRecoveryReceipt recovered = fixture.service().recoverTransaction(
+                    fixture.workspace(), fixture.state(), interrupted.transactionId().orElseThrow());
+            equal(FixtureSkillRecoveryReceipt.Status.RECOVERY_REQUIRED,
+                    recovered.status(), "recovery");
+            equal("old\n", Files.readString(fixture.target()), "content");
+            equal(changed, Files.getLastModifiedTime(fixture.target()), "mtime");
+        });
+    }
+
+    private void recoverMoveGapExisting() throws Exception {
+        withFixture(fixture -> {
+            byte[] original = "old\n".getBytes(StandardCharsets.UTF_8);
+            Files.write(fixture.target(), original);
+            FixtureSkillApplyReceipt interrupted = fixture.apply(fixture.preview(),
+                    FixtureSkillTransactionService.FailurePoint
+                            .AFTER_MOVE_BEFORE_APPLIED_MANIFEST);
+            String tx = interrupted.transactionId().orElseThrow();
+            FixtureSkillRecoveryReceipt recovered = fixture.service().recoverTransaction(
+                    fixture.workspace(), fixture.state(), tx);
+            equal(FixtureSkillRecoveryReceipt.Status.FINALIZED_APPLY,
+                    recovered.status(), "recovery");
+            FixtureSkillRollbackReceipt rollback = fixture.service().rollback(
+                    fixture.workspace(), fixture.state(), tx);
+            equal(FixtureSkillRollbackReceipt.Status.ROLLED_BACK, rollback.status(), "rollback");
+            check(java.util.Arrays.equals(original, Files.readAllBytes(fixture.target())),
+                    "preimage");
+        });
+    }
+
+    private void appliedRecoveryRequiresSnapshot() throws Exception {
+        withFixture(fixture -> {
+            Files.writeString(fixture.target(), "old\n", StandardCharsets.UTF_8);
+            FixtureSkillApplyReceipt applied = fixture.apply(fixture.preview(),
+                    FixtureSkillTransactionService.FailurePoint.NONE);
+            String tx = applied.transactionId().orElseThrow();
+            Files.delete(fixture.state().resolve(tx).resolve("preimage.bin"));
+            FixtureSkillRecoveryReceipt recovered = fixture.service().recoverTransaction(
+                    fixture.workspace(), fixture.state(), tx);
+            equal(FixtureSkillRecoveryReceipt.Status.RECOVERY_REQUIRED,
+                    recovered.status(), "recovery");
+            check(!recovered.rollbackAvailable(), "missing snapshot promised rollback");
+        });
+    }
+
+    private void recoveryRejectsStagePermissionDrift() throws Exception {
+        withFixture(fixture -> {
+            Files.writeString(fixture.target(), "old\n", StandardCharsets.UTF_8);
+            FixtureSkillApplyReceipt interrupted = fixture.apply(fixture.preview(),
+                    FixtureSkillTransactionService.FailurePoint.AFTER_COMMIT_INTENT);
+            String tx = interrupted.transactionId().orElseThrow();
+            Path stage = fixture.target().getParent().resolve(
+                    ".acw-s3-stage-" + tx + ".tmp");
+            if (posixPermissions(stage) == null) {
+                skip("POSIX permissions unsupported");
+                return;
+            }
+            Files.setPosixFilePermissions(stage, Set.of(PosixFilePermission.OWNER_READ));
+            FixtureSkillRecoveryReceipt recovered = fixture.service().recoverTransaction(
+                    fixture.workspace(), fixture.state(), tx);
+            equal(FixtureSkillRecoveryReceipt.Status.RECOVERY_REQUIRED,
+                    recovered.status(), "recovery");
+            check(!recovered.targetWritesPerformed(), "permission drift moved stage");
+            equal("old\n", Files.readString(fixture.target()), "preimage");
         });
     }
 

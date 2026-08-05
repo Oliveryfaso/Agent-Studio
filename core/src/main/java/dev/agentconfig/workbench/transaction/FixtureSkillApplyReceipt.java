@@ -33,8 +33,12 @@ public record FixtureSkillApplyReceipt(
                     writesPerformed, rollbackAvailable, true, true, true, true);
             case AUTO_ROLLED_BACK -> requireFlags(transactionId, atomicMoveUsed,
                     writesPerformed, rollbackAvailable, true, true, true, false);
-            case RECOVERY_REQUIRED -> requireFlags(transactionId, atomicMoveUsed,
-                    writesPerformed, rollbackAvailable, true, true, true, false);
+            case RECOVERY_REQUIRED -> {
+                if (transactionId.isEmpty() || rollbackAvailable
+                        || atomicMoveUsed != writesPerformed) {
+                    throw new IllegalArgumentException("recovery flags disagree with status");
+                }
+            }
             case APPROVAL_MISMATCH, STALE_PREIMAGE, FAILED_BEFORE_WRITE -> {
                 if (atomicMoveUsed || writesPerformed || rollbackAvailable) {
                     throw new IllegalArgumentException("pre-write status has write flags");

@@ -331,3 +331,11 @@
 - Apply 在目标父目录写入并 force staging file，保留原始字节与权限到外置 transaction snapshot，只允许原子 move，写后再次验证 candidate hash。故障注入覆盖 snapshot 后、stage 后、move 前和 move 后；move 后错误按 candidate hash guard 自动恢复。Rollback 仅在当前内容仍等于本事务 candidate 时恢复原始字节，或 guarded delete 恢复原本 absent；`PREPARED` 事务不能删除后来碰巧相同的用户文件。
 - root identity 增加 root/marker 文件身份、时间与 marker 内容 hash，防止旧 absent plan 对同路径重建的 fixture 生效；receipt 不含文件正文，并区分实际写入、自动恢复和需要人工恢复。
 - 新增 14 项事务 fixture；全量本地测试从 216 增至 230，版本化 conformance 保持 27 项。终审明确保留两个 S3b 阻断项：目标内容及父路径组件在检查到文件操作之间的 OS 级 CAS/dir-handle-relative 防 TOCTOU（含 symlink/junction swap），以及 move 到 manifest `APPLIED` 的 crash gap；在 durable recovery、平台 fixture 与真实授权入口完成前，Gate 5 仅为局部完成，Gate 6 不开放。
+
+## 2026-08-05：完成 S3b1 fixture apply 进程崩溃恢复
+
+- manifest 升级为 v2，增加完整性 hash、字段语义校验、preimage identity 与 `COMMIT_INTENT/ABORTED` 状态；stage 改为由 transaction UUID 确定性命名。
+- Apply 在 move 前先持久化 intent。新增 intent 后未 move、move 后未写 APPLIED 两个独立故障点；前者保留 candidate stage，后者保留 candidate target，均返回准确的 `RECOVERY_REQUIRED` 审计状态。
+- 新增 content-free `FixtureSkillRecoveryReceipt` 与显式、幂等 `recoverTransaction`。恢复可 abort 未提交的 PREPARED、完成 intent、补记已经 move 的 apply，并在目标、preimage identity、权限、snapshot、stage、manifest 或拓扑不一致时拒绝推进。
+- subagent 终审发现并修复三处边界：intent 后 move 失败不得删除 stage；APPLIED 只有在 snapshot 仍有效时才能承诺 rollback；恢复不能把相同字节但 identity/权限已变的 preimage 当作未变化。
+- 新增 11 项恢复/对抗 fixture，全量本地测试从 230 增至 241，conformance 保持 27 项。该切片只证明服务进程崩溃恢复，不保证断电持久性；rollback intent、启动恢复枚举、OS 级 CAS/防 TOCTOU 和 Windows reparse 仍是下一门槛。

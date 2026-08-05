@@ -118,22 +118,26 @@ public final class FixtureSkillTransactionService {
             Path transactionDirectory = stateRoot.resolve(transactionId);
             Files.createDirectory(transactionDirectory);
             Snapshot snapshot = snapshot(transactionDirectory, current);
+            String targetPermissions = current.present()
+                    ? current.permissions() : "OWNER_READ,OWNER_WRITE";
             Manifest manifest = new Manifest(transactionId, approvedPlan.id(),
                     approvedPlan.rootIdentitySha256(), candidate.logicalPath(), current.present(),
-                    current.present() ? current.sha256() : "", candidate.sha256(),
-                    current.permissions(), ManifestState.PREPARED);
+                    current.present() ? current.sha256() : "",
+                    current.present() ? current.identity() : "", candidate.sha256(),
+                    targetPermissions, ManifestState.PREPARED);
             writeManifest(transactionDirectory, manifest, false);
             if (failurePoint == FailurePoint.AFTER_SNAPSHOT) {
                 return failure(FixtureSkillApplyReceipt.Status.FAILED_BEFORE_WRITE,
                         approvedPlan, candidate, Optional.of(transactionId), "FAULT_AFTER_SNAPSHOT");
             }
 
-            Path stage = Files.createTempFile(target.getParent(), ".acw-s3-stage-", ".tmp");
+            Path stage = target.getParent().resolve(stageLeaf(transactionId));
             boolean moved = false;
+            boolean preserveStageForRecovery = false;
+            boolean commitIntentPersisted = false;
             try {
-                writeForced(stage, candidate.bytes());
-                setPermissions(stage, current.present()
-                        ? current.permissions() : "OWNER_READ,OWNER_WRITE");
+                writeForcedNew(stage, candidate.bytes());
+                setPermissions(stage, targetPermissions);
                 if (!hash(readBounded(stage)).equals(candidate.sha256())) {
                     return failure(FixtureSkillApplyReceipt.Status.FAILED_BEFORE_WRITE,
                             approvedPlan, candidate, Optional.of(transactionId),
@@ -153,15 +157,29 @@ public final class FixtureSkillTransactionService {
                     return failure(FixtureSkillApplyReceipt.Status.FAILED_BEFORE_WRITE,
                             approvedPlan, candidate, Optional.of(transactionId), "FAULT_BEFORE_MOVE");
                 }
+                manifest = manifest.withState(ManifestState.COMMIT_INTENT);
+                writeManifest(transactionDirectory, manifest, true);
+                commitIntentPersisted = true;
+                if (failurePoint == FailurePoint.AFTER_COMMIT_INTENT) {
+                    preserveStageForRecovery = true;
+                    return recoveryRequired(approvedPlan, candidate, transactionId,
+                            snapshot.sha256(), false, "FAULT_AFTER_COMMIT_INTENT");
+                }
                 moveAtomic(stage, target, current.present());
                 moved = true;
+                if (failurePoint == FailurePoint.AFTER_MOVE_BEFORE_APPLIED_MANIFEST) {
+                    return recoveryRequired(approvedPlan, candidate, transactionId,
+                            snapshot.sha256(), true,
+                            "FAULT_AFTER_MOVE_BEFORE_APPLIED_MANIFEST");
+                }
                 manifest = manifest.withState(ManifestState.APPLIED);
                 writeManifest(transactionDirectory, manifest, true);
                 if (failurePoint == FailurePoint.AFTER_MOVE) {
                     throw new IOException("injected failure after move");
                 }
                 TargetView written = inspect(root, target);
-                if (!written.present() || !written.sha256().equals(candidate.sha256())) {
+                if (!written.present() || !written.sha256().equals(candidate.sha256())
+                        || !written.permissions().equals(targetPermissions)) {
                     throw new IOException("post-write verification failed");
                 }
                 return new FixtureSkillApplyReceipt(1,
@@ -170,6 +188,11 @@ public final class FixtureSkillTransactionService {
                         candidate.sha256(), snapshot.sha256(), true, true, true, true,
                         "FIXTURE_APPLY_VERIFIED");
             } catch (AtomicMoveNotSupportedException exception) {
+                if (commitIntentPersisted) {
+                    preserveStageForRecovery = true;
+                    return recoveryRequired(approvedPlan, candidate, transactionId,
+                            snapshot.sha256(), false, "ATOMIC_MOVE_REQUIRES_RECOVERY");
+                }
                 return failure(FixtureSkillApplyReceipt.Status.FAILED_BEFORE_WRITE,
                         approvedPlan, candidate, Optional.of(transactionId),
                         "ATOMIC_MOVE_UNSUPPORTED");
@@ -187,11 +210,16 @@ public final class FixtureSkillTransactionService {
                             approvedPlan, candidate, transactionId, snapshot.sha256(),
                             "POST_MOVE_FAILURE_RECOVERY_REQUIRED");
                 }
+                if (commitIntentPersisted) {
+                    preserveStageForRecovery = true;
+                    return recoveryRequired(approvedPlan, candidate, transactionId,
+                            snapshot.sha256(), false, "COMMIT_INTENT_REQUIRES_RECOVERY");
+                }
                 return failure(FixtureSkillApplyReceipt.Status.FAILED_BEFORE_WRITE,
                         approvedPlan, candidate, Optional.of(transactionId),
                         "WRITE_FAILED");
             } finally {
-                if (!moved) Files.deleteIfExists(stage);
+                if (!moved && !preserveStageForRecovery) Files.deleteIfExists(stage);
             }
         } catch (Blocked blocked) {
             return failure(FixtureSkillApplyReceipt.Status.APPROVAL_MISMATCH,
@@ -232,10 +260,16 @@ public final class FixtureSkillTransactionService {
             return rollbackReceipt(transactionId, manifest.logicalPath, false,
                     FixtureSkillRollbackReceipt.Status.SNAPSHOT_INVALID, "MANIFEST_SCOPE_MISMATCH");
         }
-        if (manifest.state == ManifestState.PREPARED) {
+        if (manifest.state == ManifestState.PREPARED
+                || manifest.state == ManifestState.COMMIT_INTENT) {
+            return rollbackReceipt(transactionId, manifest.logicalPath, false,
+                    FixtureSkillRollbackReceipt.Status.RECOVERY_REQUIRED,
+                    "TRANSACTION_REQUIRES_RECOVERY");
+        }
+        if (manifest.state == ManifestState.ABORTED) {
             return rollbackReceipt(transactionId, manifest.logicalPath, false,
                     FixtureSkillRollbackReceipt.Status.SNAPSHOT_INVALID,
-                    "TRANSACTION_WAS_NEVER_APPLIED");
+                    "TRANSACTION_ABORTED_WITHOUT_APPLY");
         }
         Path target;
         try {
@@ -282,7 +316,89 @@ public final class FixtureSkillTransactionService {
                 FixtureSkillRollbackReceipt.Status.ROLLED_BACK, "ROLLBACK_VERIFIED");
     }
 
-    public enum FailurePoint { NONE, AFTER_SNAPSHOT, AFTER_STAGE, BEFORE_MOVE, AFTER_MOVE }
+    public FixtureSkillRecoveryReceipt recoverTransaction(
+            Path authorizedFixtureRoot, Path fixtureStateRoot, String transactionId)
+            throws IOException {
+        if (transactionId == null || !transactionId.matches("[0-9a-f-]{36}")) {
+            throw new IllegalArgumentException("invalid transaction id");
+        }
+        Path root;
+        Path stateRoot;
+        try {
+            root = fixtureRoot(authorizedFixtureRoot);
+            stateRoot = stateRoot(fixtureStateRoot, root);
+        } catch (Blocked blocked) {
+            return recoveryReceipt(transactionId, "unknown",
+                    FixtureSkillRecoveryReceipt.Status.INVALID_TRANSACTION,
+                    false, false, false, blocked.code);
+        }
+        Path transactionDirectory = stateRoot.resolve(transactionId);
+        if (Files.isSymbolicLink(transactionDirectory)
+                || !Files.isDirectory(transactionDirectory, LinkOption.NOFOLLOW_LINKS)) {
+            return recoveryReceipt(transactionId, "unknown",
+                    FixtureSkillRecoveryReceipt.Status.INVALID_TRANSACTION,
+                    false, false, false, "TRANSACTION_DIRECTORY_INVALID");
+        }
+        Manifest manifest;
+        try {
+            manifest = readManifest(transactionDirectory);
+        } catch (IOException | IllegalArgumentException exception) {
+            return recoveryReceipt(transactionId, "unknown",
+                    FixtureSkillRecoveryReceipt.Status.INVALID_TRANSACTION,
+                    false, false, false, "MANIFEST_INVALID");
+        }
+        if (!manifest.transactionId.equals(transactionId)
+                || !manifest.rootIdentity.equals(rootIdentity(root))) {
+            return recoveryReceipt(transactionId, manifest.logicalPath,
+                    FixtureSkillRecoveryReceipt.Status.INVALID_TRANSACTION,
+                    false, false, false, "MANIFEST_SCOPE_MISMATCH");
+        }
+        Path target;
+        try {
+            target = targetFromManifest(root, manifest.logicalPath);
+        } catch (Blocked blocked) {
+            return recoveryReceipt(transactionId, manifest.logicalPath,
+                    FixtureSkillRecoveryReceipt.Status.INVALID_TRANSACTION,
+                    false, false, false, blocked.code);
+        }
+        TargetView current;
+        try {
+            current = inspect(root, target);
+        } catch (Blocked blocked) {
+            return recoveryReceipt(transactionId, manifest.logicalPath,
+                    FixtureSkillRecoveryReceipt.Status.RECOVERY_REQUIRED,
+                    false, false, false, blocked.code);
+        }
+        Path stage = target.getParent().resolve(stageLeaf(transactionId));
+        StageState stageState = stageState(
+                stage, manifest.candidateSha256, manifest.permissions);
+        return switch (manifest.state) {
+            case PREPARED -> recoverPrepared(transactionDirectory, manifest, current,
+                    stage, stageState);
+            case COMMIT_INTENT -> recoverCommitIntent(root, transactionDirectory, manifest,
+                    target, current, stage, stageState);
+            case APPLIED -> recoverApplied(transactionDirectory, manifest, current);
+            case ABORTED -> matchesPreimage(current, manifest)
+                    ? recoveryReceipt(transactionId, manifest.logicalPath,
+                            FixtureSkillRecoveryReceipt.Status.ALREADY_ABORTED,
+                            false, false, false, "ALREADY_ABORTED")
+                    : recoveryReceipt(transactionId, manifest.logicalPath,
+                            FixtureSkillRecoveryReceipt.Status.RECOVERY_REQUIRED,
+                            false, false, false, "ABORTED_TARGET_CHANGED");
+            case ROLLED_BACK -> matchesRestoredPreimage(current, manifest)
+                    ? recoveryReceipt(transactionId, manifest.logicalPath,
+                            FixtureSkillRecoveryReceipt.Status.ALREADY_ROLLED_BACK,
+                            false, false, false, "ALREADY_ROLLED_BACK")
+                    : recoveryReceipt(transactionId, manifest.logicalPath,
+                            FixtureSkillRecoveryReceipt.Status.RECOVERY_REQUIRED,
+                            false, false, false, "ROLLED_BACK_TARGET_CHANGED");
+        };
+    }
+
+    public enum FailurePoint {
+        NONE, AFTER_SNAPSHOT, AFTER_STAGE, BEFORE_MOVE, AFTER_COMMIT_INTENT,
+        AFTER_MOVE_BEFORE_APPLIED_MANIFEST, AFTER_MOVE
+    }
 
     private static boolean restore(Path root, Path target, Manifest manifest,
             Path transactionDirectory) throws IOException {
@@ -317,6 +433,125 @@ public final class FixtureSkillTransactionService {
             return false;
         }
         return restored.present() && restored.sha256().equals(manifest.preimageSha256);
+    }
+
+    private static FixtureSkillRecoveryReceipt recoverPrepared(Path transactionDirectory,
+            Manifest manifest, TargetView current, Path stage, StageState stageState)
+            throws IOException {
+        if (!matchesPreimage(current, manifest) || stageState == StageState.INVALID) {
+            return recoveryReceipt(manifest.transactionId, manifest.logicalPath,
+                    FixtureSkillRecoveryReceipt.Status.RECOVERY_REQUIRED,
+                    false, false, false, "PREPARED_STATE_AMBIGUOUS");
+        }
+        if (stageState == StageState.CANDIDATE) Files.delete(stage);
+        writeManifest(transactionDirectory, manifest.withState(ManifestState.ABORTED), true);
+        return recoveryReceipt(manifest.transactionId, manifest.logicalPath,
+                FixtureSkillRecoveryReceipt.Status.ABORTED_PREPARED,
+                false, true, false, "PREPARED_ABORTED");
+    }
+
+    private static FixtureSkillRecoveryReceipt recoverCommitIntent(Path root,
+            Path transactionDirectory, Manifest manifest, Path target, TargetView current,
+            Path stage, StageState stageState) throws IOException {
+        if (manifest.existedBefore && !validSnapshot(transactionDirectory, manifest)) {
+            return recoveryReceipt(manifest.transactionId, manifest.logicalPath,
+                    FixtureSkillRecoveryReceipt.Status.RECOVERY_REQUIRED,
+                    false, false, false, "SNAPSHOT_INVALID");
+        }
+        if (current.present() && current.sha256().equals(manifest.candidateSha256)
+                && current.permissions().equals(manifest.permissions)
+                && stageState == StageState.ABSENT) {
+            writeManifest(transactionDirectory, manifest.withState(ManifestState.APPLIED), true);
+            return recoveryReceipt(manifest.transactionId, manifest.logicalPath,
+                    FixtureSkillRecoveryReceipt.Status.FINALIZED_APPLY,
+                    false, true, true, "APPLY_MANIFEST_FINALIZED");
+        }
+        if (matchesPreimage(current, manifest) && stageState == StageState.CANDIDATE) {
+            moveAtomic(stage, target, manifest.existedBefore);
+            TargetView written;
+            try {
+                written = inspect(root, target);
+            } catch (Blocked blocked) {
+                return recoveryReceipt(manifest.transactionId, manifest.logicalPath,
+                        FixtureSkillRecoveryReceipt.Status.RECOVERY_REQUIRED,
+                        true, false, false, blocked.code);
+            }
+            if (!written.present() || !written.sha256().equals(manifest.candidateSha256)
+                    || !written.permissions().equals(manifest.permissions)) {
+                return recoveryReceipt(manifest.transactionId, manifest.logicalPath,
+                        FixtureSkillRecoveryReceipt.Status.RECOVERY_REQUIRED,
+                        true, false, false, "RECOVERED_TARGET_INVALID");
+            }
+            writeManifest(transactionDirectory, manifest.withState(ManifestState.APPLIED), true);
+            return recoveryReceipt(manifest.transactionId, manifest.logicalPath,
+                    FixtureSkillRecoveryReceipt.Status.COMPLETED_APPLY,
+                    true, true, true, "APPLY_COMPLETED_FROM_INTENT");
+        }
+        return recoveryReceipt(manifest.transactionId, manifest.logicalPath,
+                FixtureSkillRecoveryReceipt.Status.RECOVERY_REQUIRED,
+                false, false, false, "COMMIT_INTENT_AMBIGUOUS");
+    }
+
+    private static boolean matchesPreimage(TargetView current, Manifest manifest) {
+        if (current.blockedReason().isPresent()) return false;
+        if (!manifest.existedBefore) return !current.present();
+        return current.present() && current.sha256().equals(manifest.preimageSha256)
+                && current.identity().equals(manifest.preimageIdentity);
+    }
+
+    private static boolean matchesRestoredPreimage(TargetView current, Manifest manifest) {
+        if (current.blockedReason().isPresent()) return false;
+        if (!manifest.existedBefore) return !current.present();
+        return current.present() && current.sha256().equals(manifest.preimageSha256);
+    }
+
+    private static FixtureSkillRecoveryReceipt recoverApplied(Path transactionDirectory,
+            Manifest manifest, TargetView current) throws IOException {
+        boolean snapshotValid = !manifest.existedBefore
+                || validSnapshot(transactionDirectory, manifest);
+        if (current.present() && current.sha256().equals(manifest.candidateSha256)
+                && current.permissions().equals(manifest.permissions) && snapshotValid) {
+            return recoveryReceipt(manifest.transactionId, manifest.logicalPath,
+                    FixtureSkillRecoveryReceipt.Status.ALREADY_APPLIED,
+                    false, false, true, "ALREADY_APPLIED");
+        }
+        return recoveryReceipt(manifest.transactionId, manifest.logicalPath,
+                FixtureSkillRecoveryReceipt.Status.RECOVERY_REQUIRED,
+                false, false, false, snapshotValid
+                        ? "APPLIED_TARGET_CHANGED" : "SNAPSHOT_INVALID");
+    }
+
+    private static boolean validSnapshot(Path transactionDirectory, Manifest manifest) {
+        try {
+            Path snapshot = transactionDirectory.resolve(SNAPSHOT);
+            if (Files.isSymbolicLink(snapshot)
+                    || !Files.isRegularFile(snapshot, LinkOption.NOFOLLOW_LINKS)) return false;
+            return hash(readBounded(snapshot)).equals(manifest.preimageSha256);
+        } catch (IOException exception) {
+            return false;
+        }
+    }
+
+    private static StageState stageState(
+            Path stage, String candidateSha256, String expectedPermissions) {
+        try {
+            if (!Files.exists(stage, LinkOption.NOFOLLOW_LINKS)) return StageState.ABSENT;
+            if (Files.isSymbolicLink(stage)
+                    || !Files.isRegularFile(stage, LinkOption.NOFOLLOW_LINKS)
+                    || unsafeLink(stage)) return StageState.INVALID;
+            return hash(readBounded(stage)).equals(candidateSha256)
+                            && permissions(stage).equals(expectedPermissions)
+                    ? StageState.CANDIDATE : StageState.INVALID;
+        } catch (IOException exception) {
+            return StageState.INVALID;
+        }
+    }
+
+    private static String stageLeaf(String transactionId) {
+        if (transactionId == null || !transactionId.matches("[0-9a-f-]{36}")) {
+            throw new IllegalArgumentException("invalid transaction id");
+        }
+        return ".acw-s3-stage-" + transactionId + ".tmp";
     }
 
     private static Snapshot snapshot(Path transactionDirectory, TargetView current)
@@ -553,6 +788,24 @@ public final class FixtureSkillTransactionService {
                 true, true, false, detail);
     }
 
+    private static FixtureSkillApplyReceipt recoveryRequired(FixtureSkillChangePlan plan,
+            Candidate candidate, String transactionId, Optional<String> snapshotSha256,
+            boolean targetWritten, String detail) {
+        return new FixtureSkillApplyReceipt(1,
+                FixtureSkillApplyReceipt.Status.RECOVERY_REQUIRED,
+                Optional.of(transactionId), plan.id(), candidate.logicalPath(),
+                candidate.sha256(), snapshotSha256, true,
+                targetWritten, targetWritten, false, detail);
+    }
+
+    private static FixtureSkillRecoveryReceipt recoveryReceipt(String transactionId,
+            String logicalPath, FixtureSkillRecoveryReceipt.Status status,
+            boolean targetWrites, boolean stateWrites, boolean rollbackAvailable,
+            String detail) {
+        return new FixtureSkillRecoveryReceipt(1, transactionId, status, logicalPath,
+                true, targetWrites, stateWrites, rollbackAvailable, detail);
+    }
+
     private static FixtureSkillRollbackReceipt rollbackReceipt(String tx, String path,
             boolean writes, FixtureSkillRollbackReceipt.Status status, String detail) {
         return new FixtureSkillRollbackReceipt(1, tx, status, path, true, writes, detail);
@@ -648,16 +901,18 @@ public final class FixtureSkillTransactionService {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         try (DataOutputStream output = new DataOutputStream(bytes)) {
             output.writeUTF("ACW-S3-FIXTURE-MANIFEST");
-            output.writeInt(1);
+            output.writeInt(2);
             output.writeUTF(manifest.transactionId);
             output.writeUTF(manifest.planId);
             output.writeUTF(manifest.rootIdentity);
             output.writeUTF(manifest.logicalPath);
             output.writeBoolean(manifest.existedBefore);
             output.writeUTF(manifest.preimageSha256);
+            output.writeUTF(manifest.preimageIdentity);
             output.writeUTF(manifest.candidateSha256);
             output.writeUTF(manifest.permissions);
             output.writeUTF(manifest.state.name());
+            output.writeUTF(manifestIntegrity(manifest));
         }
         return bytes.toByteArray();
     }
@@ -668,15 +923,55 @@ public final class FixtureSkillTransactionService {
                 || Files.size(path) > 4096) throw new IOException("manifest missing");
         byte[] bytes = Files.readAllBytes(path);
         try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(bytes))) {
-            if (!"ACW-S3-FIXTURE-MANIFEST".equals(input.readUTF()) || input.readInt() != 1) {
+            if (!"ACW-S3-FIXTURE-MANIFEST".equals(input.readUTF()) || input.readInt() != 2) {
                 throw new IOException("manifest schema");
             }
             Manifest manifest = new Manifest(input.readUTF(), input.readUTF(), input.readUTF(),
                     input.readUTF(), input.readBoolean(), input.readUTF(), input.readUTF(),
-                    input.readUTF(), ManifestState.valueOf(input.readUTF()));
+                    input.readUTF(), input.readUTF(), ManifestState.valueOf(input.readUTF()));
+            String integrity = input.readUTF();
             if (input.read() != -1) throw new IOException("manifest trailing bytes");
+            validateManifest(manifest);
+            if (!integrity.equals(manifestIntegrity(manifest))) {
+                throw new IOException("manifest integrity");
+            }
             return manifest;
         }
+    }
+
+    private static void validateManifest(Manifest manifest) throws IOException {
+        if (!manifest.transactionId.matches("[0-9a-f-]{36}")
+                || !manifest.planId.matches("scp_[0-9a-f]{64}")
+                || !manifest.rootIdentity.matches("[0-9a-f]{64}")
+                || !manifest.logicalPath.matches(
+                        "\\.agents/skills/[a-z0-9]+(?:-[a-z0-9]+)*/SKILL\\.md")
+                || !manifest.candidateSha256.matches("[0-9a-f]{64}")
+                || (manifest.existedBefore
+                        != manifest.preimageSha256.matches("[0-9a-f]{64}"))
+                || (manifest.existedBefore != !manifest.preimageIdentity.isEmpty())
+                || (!manifest.preimageIdentity.isEmpty()
+                        && !manifest.preimageIdentity.matches("[0-9a-f]{64}"))) {
+            throw new IOException("manifest semantic validation");
+        }
+        if (!"UNSUPPORTED".equals(manifest.permissions)) {
+            try {
+                if (!manifest.permissions.isEmpty()) {
+                    for (String permission : manifest.permissions.split(",")) {
+                        PosixFilePermission.valueOf(permission);
+                    }
+                }
+            } catch (IllegalArgumentException exception) {
+                throw new IOException("manifest permissions", exception);
+            }
+        }
+    }
+
+    private static String manifestIntegrity(Manifest manifest) {
+        return hash(tuple("fixture-manifest:v2", manifest.transactionId, manifest.planId,
+                manifest.rootIdentity, manifest.logicalPath,
+                Boolean.toString(manifest.existedBefore), manifest.preimageSha256,
+                manifest.preimageIdentity, manifest.candidateSha256,
+                manifest.permissions, manifest.state.name()));
     }
 
     private static Candidate readyCandidate(CodexSkillDraftPreview draft) {
@@ -737,14 +1032,17 @@ public final class FixtureSkillTransactionService {
 
     private record Snapshot(Optional<String> sha256) {}
 
-    private enum ManifestState { PREPARED, APPLIED, ROLLED_BACK }
+    private enum ManifestState { PREPARED, COMMIT_INTENT, APPLIED, ABORTED, ROLLED_BACK }
+
+    private enum StageState { ABSENT, CANDIDATE, INVALID }
 
     private record Manifest(String transactionId, String planId, String rootIdentity,
             String logicalPath, boolean existedBefore, String preimageSha256,
-            String candidateSha256, String permissions, ManifestState state) {
+            String preimageIdentity, String candidateSha256, String permissions,
+            ManifestState state) {
         Manifest withState(ManifestState next) {
             return new Manifest(transactionId, planId, rootIdentity, logicalPath, existedBefore,
-                    preimageSha256, candidateSha256, permissions, next);
+                    preimageSha256, preimageIdentity, candidateSha256, permissions, next);
         }
     }
 

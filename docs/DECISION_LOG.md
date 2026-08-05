@@ -280,6 +280,15 @@
 - 未通过项：`ATOMIC_MOVE` 不是 compare-and-swap，最后一次检查到文件操作之间仍可发生目标内容或父路径组件替换，包括 symlink/junction swap；真实入口需要 OS 级 CAS 或 dir-handle-relative 防 TOCTOU。move 成功到 manifest `APPLIED` 持久化之间也仍有崩溃窗口；尚无启动恢复、durable journal、Windows junction/reparse 完整 fixture 或长期 vault。因此 Gate 5 只算 fixture 子切片，Gate 6 保持未开始。
 - 原因：先用强 marker 和无公开入口隔离真实用户文件，可以验证事务 API 与失败语义，同时不把尚未具备 crash/concurrency 证明的原型包装成可用 Apply。
 
+## ADR-033：S3b1 以 COMMIT_INTENT 恢复中断的 fixture apply
+
+- 日期：2026-08-05
+- 状态：接受
+- 决定：仍保持 fixture-only、无 CLI。manifest v2 在字段语义外增加完整性 hash，并持久化 candidate、preimage hash/identity、目标权限和事务状态。Apply 在目标 move 前先原子写入 `COMMIT_INTENT`；stage 名只由 transaction UUID 推导。显式 `recoverTransaction` 对 `PREPARED` 做无目标写入的 abort，对 `COMMIT_INTENT + exact preimage + candidate stage` 完成 apply，对 `COMMIT_INTENT + candidate target + absent stage` 只补记 `APPLIED`；其他组合 fail closed。
+- 审计语义：恢复 receipt 分开记录本次 target write 与 state write。`rollbackAvailable` 只有在 candidate、权限和 existing snapshot 均验证后才为 true。恢复前仍检查 preimage identity，不能因“字节相同”覆盖已被重建、改时间或改权限的文件。
+- 故障语义：新增 intent 后、move 与 APPLIED 之间的独立注入点；一旦 intent 已持久化，move 异常必须保留 stage 并返回 `RECOVERY_REQUIRED`，不能降级为普通 pre-write failure。`PREPARED/COMMIT_INTENT` 的 rollback 要求先 recover。
+- 能力边界：这里只证明 service process-crash reconciliation，不宣称 power-loss durability。Java 21 `SecureDirectoryStream` 是 provider 可选能力，在当前 macOS/Windows 基线上不可作为统一后端，而且不能提供 leaf CAS；父路径 swap、conditional replace/delete、rollback intent、批量启动恢复和 directory fsync 仍阻断 Gate 6。
+
 ## 待决问题
 
 - [ ] 为正式工程选择 Java 构建工具与最小模块骨架；当前纯 JDK 脚本仅服务 Phase 1 spike。
