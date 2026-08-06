@@ -20,6 +20,7 @@ import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.attribute.PosixFilePermission;
+import java.nio.file.attribute.PosixFileAttributeView;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
@@ -32,10 +33,10 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * Transitional Gate-6 entry for replacing one existing Codex project Skill.
+ * Transitional Gate-6 entry for creating or replacing one Codex project Skill.
  *
- * <p>This deliberately does not create target directories, recover interrupted processes, or
- * claim power-loss durability. It keeps the minimum real-workspace contract: explicit root,
+ * <p>This deliberately does not recover interrupted processes or claim power-loss durability.
+ * It keeps the minimum real-workspace contract: explicit root and operation,
  * exact diff, approval token, stale-target rejection, external snapshot, atomic replacement,
  * verification, and guarded rollback.</p>
  */
@@ -46,21 +47,52 @@ public final class ControlledExistingSkillService {
     private static final String MANIFEST = "manifest.bin";
     private static final String SNAPSHOT = "preimage.bin";
 
+    public enum Mode { UPDATE_EXISTING, CREATE_NEW }
+
     public PreparedControlledSkillChange prepare(Path authorizedWorkspace,
             CodexSkillDraftPreview draft) throws IOException {
+        return prepare(authorizedWorkspace, draft, Mode.UPDATE_EXISTING);
+    }
+
+    public PreparedControlledSkillChange prepare(Path authorizedWorkspace,
+            CodexSkillDraftPreview draft, Mode mode) throws IOException {
+        if (mode == null) throw new NullPointerException("mode");
         Candidate candidate = readyCandidate(draft);
         Path root;
         String rootIdentity;
         try {
             root = controlledRoot(authorizedWorkspace);
             rootIdentity = rootIdentity(root);
-            Path target = target(root, candidate.logicalPath());
+            Path target = target(root, candidate.logicalPath(), mode == Mode.CREATE_NEW);
             TargetView current = inspect(root, target);
             if (current.blockedReason().isPresent()) {
                 return blocked(rootIdentity, candidate,
                         current.blockedReason().orElseThrow());
             }
-            if (!current.present()) return blocked(rootIdentity, candidate, "EXISTING_TARGET_REQUIRED");
+            if (mode == Mode.UPDATE_EXISTING && !current.present()) {
+                return blocked(rootIdentity, candidate, "EXISTING_TARGET_REQUIRED");
+            }
+            if (mode == Mode.CREATE_NEW && current.present()) {
+                return blocked(rootIdentity, candidate, "CREATE_TARGET_ALREADY_EXISTS");
+            }
+            if (mode == Mode.CREATE_NEW) {
+                List<String> missingParents = missingTargetParents(root, target);
+                String diff = exactCreateDiff(candidate);
+                String diffSha = hash(diff);
+                String id = "csp_" + hash(tuple("controlled-create-plan:v1", rootIdentity,
+                        candidate.logicalPath(), candidate.sha256(), diffSha,
+                        String.join("\n", missingParents)));
+                String approval = "acw_apply1_" + hash(tuple("controlled-create-approval:v1", id,
+                        rootIdentity, candidate.logicalPath(), candidate.sha256(), diffSha,
+                        String.join("\n", missingParents)));
+                ControlledSkillChangePlan plan = new ControlledSkillChangePlan(1, id,
+                        ControlledSkillChangePlan.Status.READY_CREATE, rootIdentity,
+                        candidate.logicalPath(), candidate.sha256(), Optional.empty(),
+                        Optional.empty(), Optional.empty(), Optional.of(diffSha),
+                        Optional.of(approval), Optional.empty(), missingParents,
+                        false, false, true);
+                return new PreparedControlledSkillChange(plan, Optional.of(diff));
+            }
             if (!strictSkillText(current.bytes())) {
                 return blocked(rootIdentity, candidate, "TARGET_MUST_BE_UTF8_LF_WITH_FINAL_NEWLINE");
             }
@@ -71,7 +103,8 @@ public final class ControlledExistingSkillService {
                         ControlledSkillChangePlan.Status.NO_CHANGE, rootIdentity,
                         candidate.logicalPath(), candidate.sha256(), Optional.of(current.sha256()),
                         Optional.of(current.identity()), Optional.of(current.permissions()),
-                        Optional.empty(), Optional.empty(), Optional.empty(), false, false, false);
+                        Optional.empty(), Optional.empty(), Optional.empty(), List.of(),
+                        false, false, false);
                 return new PreparedControlledSkillChange(plan, Optional.empty());
             }
             String diff = exactDiff(candidate, current);
@@ -87,7 +120,7 @@ public final class ControlledExistingSkillService {
                     candidate.logicalPath(), candidate.sha256(), Optional.of(current.sha256()),
                     Optional.of(current.identity()), Optional.of(current.permissions()),
                     Optional.of(diffSha), Optional.of(approval), Optional.empty(),
-                    false, false, true);
+                    List.of(), false, false, true);
             return new PreparedControlledSkillChange(plan, Optional.of(diff));
         } catch (Blocked blocked) {
             rootIdentity = hash(authorizedWorkspace.toAbsolutePath().normalize().toString());
@@ -97,7 +130,14 @@ public final class ControlledExistingSkillService {
 
     public ControlledSkillApplyReceipt apply(Path authorizedWorkspace, Path stateDirectory,
             CodexSkillDraftPreview draft, String approvalToken) throws IOException {
-        PreparedControlledSkillChange prepared = prepare(authorizedWorkspace, draft);
+        return apply(authorizedWorkspace, stateDirectory, draft, Mode.UPDATE_EXISTING,
+                approvalToken);
+    }
+
+    public ControlledSkillApplyReceipt apply(Path authorizedWorkspace, Path stateDirectory,
+            CodexSkillDraftPreview draft, Mode mode, String approvalToken) throws IOException {
+        if (mode == null) throw new NullPointerException("mode");
+        PreparedControlledSkillChange prepared = prepare(authorizedWorkspace, draft, mode);
         ControlledSkillChangePlan plan = prepared.plan();
         if (!plan.applyEligible() || approvalToken == null
                 || !approvalToken.equals(plan.approvalToken().orElse(""))) {
@@ -118,7 +158,7 @@ public final class ControlledExistingSkillService {
         Path target;
         TargetView current;
         try {
-            target = target(root, candidate.logicalPath());
+            target = target(root, candidate.logicalPath(), mode == Mode.CREATE_NEW);
             current = inspect(root, target);
         } catch (Blocked blocked) {
             return applyReceipt(ControlledSkillApplyReceipt.Status.BLOCKED,
@@ -135,38 +175,59 @@ public final class ControlledExistingSkillService {
         boolean stateWritten = false;
         boolean ownedStage = false;
         boolean moved = false;
+        List<CreatedParent> createdParents = new ArrayList<>();
         try {
             Files.createDirectory(transaction);
             stateWritten = true;
-            Path snapshot = transaction.resolve(SNAPSHOT);
-            writeNewForced(snapshot, current.bytes());
+            if (current.present()) {
+                Path snapshot = transaction.resolve(SNAPSHOT);
+                writeNewForced(snapshot, current.bytes());
+            } else {
+                createTargetParents(root, target, createdParents);
+            }
             writeNewForced(stage, candidate.bytes());
             ownedStage = true;
-            setPermissions(stage, current.permissions());
+            String targetPermissions = current.present()
+                    ? current.permissions() : newTargetPermissions(target.getParent());
+            setPermissions(stage, targetPermissions);
             TargetView staged = inspect(root, stage);
             if (!staged.present() || !staged.sha256().equals(candidate.sha256())
-                    || !staged.permissions().equals(current.permissions())) {
-                return applyReceipt(ControlledSkillApplyReceipt.Status.WRITE_FAILED,
-                        Optional.of(transactionId), plan, false, true, false, false,
-                        "STAGE_VERIFICATION_FAILED");
+                    || !staged.permissions().equals(targetPermissions)) {
+                boolean workspaceWrites = ownedStage || !createdParents.isEmpty();
+                boolean cleaned = cleanupCreateFailure(root, stage, ownedStage, createdParents);
+                ownedStage = false;
+                return applyReceipt(cleaned ? ControlledSkillApplyReceipt.Status.WRITE_FAILED
+                                : ControlledSkillApplyReceipt.Status.RECOVERY_REQUIRED,
+                        Optional.of(transactionId), plan, workspaceWrites, true, false, !cleaned,
+                        cleaned ? "STAGE_VERIFICATION_FAILED"
+                                : "STAGE_VERIFICATION_FAILED_WITH_RESIDUE");
             }
             Manifest manifest = new Manifest(transactionId, plan.rootIdentitySha256(),
-                    plan.logicalPath(), current.sha256(), current.identity(), current.permissions(),
-                    candidate.sha256(), staged.identity(), State.APPLY_INTENT);
+                    plan.logicalPath(), current.present(), current.sha256(), current.identity(),
+                    targetPermissions, candidate.sha256(), staged.identity(), createdParents,
+                    State.APPLY_INTENT);
             writeManifest(transaction, manifest, false);
             TargetView beforeMove = inspect(root, target);
             if (!matchesPlan(beforeMove, plan)) {
-                return applyReceipt(ControlledSkillApplyReceipt.Status.STALE_PREIMAGE,
-                        Optional.of(transactionId), plan, false, true, false, false,
-                        "STALE_BEFORE_MOVE");
+                boolean workspaceWrites = ownedStage || !createdParents.isEmpty();
+                boolean cleaned = cleanupCreateFailure(root, stage, ownedStage, createdParents);
+                ownedStage = false;
+                return applyReceipt(cleaned ? ControlledSkillApplyReceipt.Status.STALE_PREIMAGE
+                                : ControlledSkillApplyReceipt.Status.RECOVERY_REQUIRED,
+                        Optional.of(transactionId), plan, workspaceWrites, true, false, !cleaned,
+                        cleaned ? "STALE_BEFORE_MOVE" : "STALE_BEFORE_MOVE_WITH_RESIDUE");
             }
-            Files.move(stage, target, StandardCopyOption.ATOMIC_MOVE,
-                    StandardCopyOption.REPLACE_EXISTING);
+            if (current.present()) {
+                Files.move(stage, target, StandardCopyOption.ATOMIC_MOVE,
+                        StandardCopyOption.REPLACE_EXISTING);
+            } else {
+                Files.move(stage, target, StandardCopyOption.ATOMIC_MOVE);
+            }
             moved = true;
             ownedStage = false;
             TargetView written = inspect(root, target);
             if (!written.present() || !written.sha256().equals(candidate.sha256())
-                    || !written.permissions().equals(current.permissions())) {
+                    || !written.permissions().equals(targetPermissions)) {
                 return applyReceipt(ControlledSkillApplyReceipt.Status.RECOVERY_REQUIRED,
                         Optional.of(transactionId), plan, true, true, false, true,
                         "POST_WRITE_VERIFICATION_FAILED");
@@ -176,13 +237,24 @@ public final class ControlledExistingSkillService {
                     Optional.of(transactionId), plan, true, true, true, false,
                     "CONTROLLED_APPLY_VERIFIED");
         } catch (IOException | Blocked exception) {
-            return applyReceipt(moved ? ControlledSkillApplyReceipt.Status.RECOVERY_REQUIRED
+            boolean workspaceWrites = moved || ownedStage || !createdParents.isEmpty();
+            boolean cleaned = moved
+                    || cleanupCreateFailure(root, stage, ownedStage, createdParents);
+            ownedStage = false;
+            boolean recovery = moved || !cleaned;
+            return applyReceipt(recovery ? ControlledSkillApplyReceipt.Status.RECOVERY_REQUIRED
                             : ControlledSkillApplyReceipt.Status.WRITE_FAILED,
                     stateWritten ? Optional.of(transactionId) : Optional.empty(), plan,
-                    moved, stateWritten, false, moved,
-                    moved ? "WRITE_FAILED_AFTER_TARGET_MOVE" : "WRITE_FAILED_BEFORE_TARGET_MOVE");
+                    workspaceWrites, stateWritten, false, recovery,
+                    moved ? "WRITE_FAILED_AFTER_TARGET_MOVE"
+                            : cleaned ? "WRITE_FAILED_BEFORE_TARGET_MOVE"
+                                    : "WRITE_FAILED_WITH_WORKSPACE_RESIDUE");
         } finally {
-            if (ownedStage) Files.deleteIfExists(stage);
+            try {
+                if (ownedStage) Files.deleteIfExists(stage);
+            } finally {
+                if (!moved) removeOwnedEmptyParents(root, createdParents);
+            }
         }
     }
 
@@ -221,7 +293,7 @@ public final class ControlledExistingSkillService {
         Path target;
         TargetView current;
         try {
-            target = target(root, manifest.logicalPath);
+            target = target(root, manifest.logicalPath, false);
             current = inspect(root, target);
         } catch (Blocked blocked) {
             return rollbackReceipt(transactionId, manifest.logicalPath,
@@ -229,10 +301,11 @@ public final class ControlledExistingSkillService {
                     false, false, false, blocked.code);
         }
         if (manifest.state == State.ROLLED_BACK) {
-            boolean restored = current.present()
-                    && current.sha256().equals(manifest.preimageSha256)
-                    && current.permissions().equals(manifest.permissions)
-                    && current.identity().equals(manifest.resultIdentity);
+            boolean restored = manifest.existedBefore
+                    ? current.present() && current.sha256().equals(manifest.preimageSha256)
+                            && current.permissions().equals(manifest.permissions)
+                            && current.identity().equals(manifest.resultIdentity)
+                    : !current.present();
             return rollbackReceipt(transactionId, manifest.logicalPath,
                     restored ? ControlledSkillRollbackReceipt.Status.ALREADY_ROLLED_BACK
                             : ControlledSkillRollbackReceipt.Status.CURRENT_TARGET_CHANGED,
@@ -251,6 +324,37 @@ public final class ControlledExistingSkillService {
             return rollbackReceipt(transactionId, manifest.logicalPath,
                     ControlledSkillRollbackReceipt.Status.CURRENT_TARGET_CHANGED,
                     false, false, false, "CURRENT_TARGET_CHANGED");
+        }
+        if (!manifest.existedBefore) {
+            boolean deleted = false;
+            try {
+                TargetView beforeDelete = inspect(root, target);
+                if (!beforeDelete.present()
+                        || !beforeDelete.identity().equals(current.identity())
+                        || !beforeDelete.sha256().equals(current.sha256())
+                        || !beforeDelete.permissions().equals(current.permissions())) {
+                    return rollbackReceipt(transactionId, manifest.logicalPath,
+                            ControlledSkillRollbackReceipt.Status.CURRENT_TARGET_CHANGED,
+                            false, false, false, "CURRENT_TARGET_CHANGED_BEFORE_ROLLBACK_DELETE");
+                }
+                Files.delete(target);
+                deleted = true;
+                if (inspect(root, target).present()) {
+                    return rollbackReceipt(transactionId, manifest.logicalPath,
+                            ControlledSkillRollbackReceipt.Status.RECOVERY_REQUIRED,
+                            true, false, true, "ROLLBACK_DELETE_VERIFICATION_FAILED");
+                }
+                removeOwnedEmptyParents(root, manifest.createdParents);
+                writeManifest(transaction, manifest.rolledBack(""), true);
+                return rollbackReceipt(transactionId, manifest.logicalPath,
+                        ControlledSkillRollbackReceipt.Status.ROLLED_BACK,
+                        true, true, false, "CONTROLLED_CREATE_ROLLBACK_VERIFIED");
+            } catch (IOException | Blocked exception) {
+                return rollbackReceipt(transactionId, manifest.logicalPath,
+                        deleted ? ControlledSkillRollbackReceipt.Status.RECOVERY_REQUIRED
+                                : ControlledSkillRollbackReceipt.Status.WRITE_FAILED,
+                        deleted, false, deleted, "ROLLBACK_DELETE_FAILED");
+            }
         }
         Path snapshot = transaction.resolve(SNAPSHOT);
         byte[] original;
@@ -326,7 +430,8 @@ public final class ControlledExistingSkillService {
                         candidate.logicalPath(), candidate.sha256(), reason)),
                 ControlledSkillChangePlan.Status.BLOCKED, rootIdentity, candidate.logicalPath(),
                 candidate.sha256(), Optional.empty(), Optional.empty(), Optional.empty(),
-                Optional.empty(), Optional.empty(), Optional.of(reason), false, false, false);
+                Optional.empty(), Optional.empty(), Optional.of(reason), List.of(),
+                false, false, false);
         return new PreparedControlledSkillChange(plan, Optional.empty());
     }
 
@@ -347,8 +452,11 @@ public final class ControlledExistingSkillService {
     }
 
     private static boolean matchesPlan(TargetView current, ControlledSkillChangePlan plan) {
-        return current.blockedReason().isEmpty() && current.present()
-                && current.sha256().equals(plan.preimageSha256().orElse(""))
+        if (current.blockedReason().isPresent()) return false;
+        if (plan.status() == ControlledSkillChangePlan.Status.READY_CREATE) {
+            return !current.present();
+        }
+        return current.present() && current.sha256().equals(plan.preimageSha256().orElse(""))
                 && current.identity().equals(plan.preimageIdentity().orElse(""))
                 && current.permissions().equals(plan.permissions().orElse(""));
     }
@@ -404,17 +512,97 @@ public final class ControlledExistingSkillService {
         return state;
     }
 
-    private static Path target(Path root, String logicalPath) throws IOException, Blocked {
+    private static Path target(Path root, String logicalPath, boolean allowMissingParents)
+            throws IOException, Blocked {
         Path target = root.resolve(logicalPath).normalize();
         if (!target.startsWith(root)) throw new Blocked("TARGET_OUTSIDE_ROOT");
         Path cursor = root;
         for (Path segment : root.relativize(target.getParent())) {
             cursor = cursor.resolve(segment);
+            if (!Files.exists(cursor, LinkOption.NOFOLLOW_LINKS)) {
+                if (allowMissingParents) continue;
+                throw new Blocked("TARGET_PARENT_MISSING_OR_UNSAFE");
+            }
             if (!Files.isDirectory(cursor, LinkOption.NOFOLLOW_LINKS) || unsafeLink(cursor)) {
                 throw new Blocked("TARGET_PARENT_MISSING_OR_UNSAFE");
             }
         }
         return target;
+    }
+
+    private static void createTargetParents(Path root, Path target, List<CreatedParent> created)
+            throws IOException, Blocked {
+        Path cursor = root;
+        for (Path segment : root.relativize(target.getParent())) {
+            cursor = cursor.resolve(segment);
+            if (!Files.exists(cursor, LinkOption.NOFOLLOW_LINKS)) {
+                Files.createDirectory(cursor);
+                created.add(new CreatedParent(
+                        root.relativize(cursor).toString().replace('\\', '/'),
+                        directoryIdentity(cursor)));
+            }
+            if (!Files.isDirectory(cursor, LinkOption.NOFOLLOW_LINKS) || unsafeLink(cursor)) {
+                throw new Blocked("TARGET_PARENT_MISSING_OR_UNSAFE");
+            }
+        }
+    }
+
+    private static List<String> missingTargetParents(Path root, Path target) {
+        List<String> missing = new ArrayList<>();
+        Path cursor = root;
+        for (Path segment : root.relativize(target.getParent())) {
+            cursor = cursor.resolve(segment);
+            if (!Files.exists(cursor, LinkOption.NOFOLLOW_LINKS)) {
+                missing.add(root.relativize(cursor).toString().replace('\\', '/'));
+            }
+        }
+        return List.copyOf(missing);
+    }
+
+    private static boolean removeOwnedEmptyParents(Path root, List<CreatedParent> parents) {
+        boolean removed = true;
+        for (int index = parents.size() - 1; index >= 0; index--) {
+            CreatedParent parent = parents.get(index);
+            Path directory = root.resolve(parent.logicalPath()).normalize();
+            try {
+                if (directory.startsWith(root) && !directory.equals(root)
+                        && !Files.isSymbolicLink(directory)
+                        && Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)
+                        && directoryIdentity(directory).equals(parent.identity())) {
+                    Files.delete(directory);
+                } else if (Files.exists(directory, LinkOption.NOFOLLOW_LINKS)) {
+                    removed = false;
+                }
+            } catch (IOException ignored) {
+                removed = false;
+            }
+        }
+        return removed;
+    }
+
+    private static boolean cleanupCreateFailure(Path root, Path stage, boolean ownedStage,
+            List<CreatedParent> createdParents) {
+        boolean stageRemoved = true;
+        if (ownedStage) {
+            try {
+                Files.delete(stage);
+            } catch (IOException exception) {
+                stageRemoved = false;
+            }
+        }
+        return stageRemoved && removeOwnedEmptyParents(root, createdParents);
+    }
+
+    private static String directoryIdentity(Path directory) throws IOException {
+        BasicFileAttributes attributes = Files.readAttributes(
+                directory, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+        return hash(tuple("controlled-directory:v1", String.valueOf(attributes.fileKey()),
+                attributes.creationTime().toString()));
+    }
+
+    private static String newTargetPermissions(Path parent) throws IOException {
+        return Files.getFileStore(parent).supportsFileAttributeView(PosixFileAttributeView.class)
+                ? "OWNER_READ,OWNER_WRITE" : "UNSUPPORTED";
     }
 
     private static TargetView inspect(Path root, Path target) throws IOException, Blocked {
@@ -469,7 +657,11 @@ public final class ControlledExistingSkillService {
                 permissions.add(PosixFilePermission.valueOf(value));
             }
         }
-        Files.setPosixFilePermissions(path, permissions);
+        try {
+            Files.setPosixFilePermissions(path, permissions);
+        } catch (UnsupportedOperationException exception) {
+            if (!"OWNER_READ,OWNER_WRITE".equals(encoded)) throw exception;
+        }
     }
 
     private static String exactDiff(Candidate candidate, TargetView target) {
@@ -490,6 +682,20 @@ public final class ControlledExistingSkillService {
                 .append("@@ -1,").append(oldLines.size()).append(" +1,")
                 .append(newLines.size()).append(" @@\n");
         for (String line : oldLines) diff.append('-').append(line).append('\n');
+        for (String line : newLines) diff.append('+').append(line).append('\n');
+        return diff.toString();
+    }
+
+    private static String exactCreateDiff(Candidate candidate) {
+        List<String> newLines = lines(candidate.content());
+        StringBuilder diff = new StringBuilder()
+                .append("# diffMode=REAL_TARGET_EXACT_CREATION targetState=ABSENT applyEligible=true\n")
+                .append("diff --git a/").append(candidate.logicalPath()).append(" b/")
+                .append(candidate.logicalPath()).append('\n')
+                .append("new file mode 100644\n")
+                .append("--- /dev/null\n")
+                .append("+++ b/").append(candidate.logicalPath()).append('\n')
+                .append("@@ -0,0 +1,").append(newLines.size()).append(" @@\n");
         for (String line : newLines) diff.append('+').append(line).append('\n');
         return diff.toString();
     }
@@ -579,15 +785,21 @@ public final class ControlledExistingSkillService {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         try (DataOutputStream output = new DataOutputStream(bytes)) {
             output.writeUTF("ACW-CONTROLLED-SKILL");
-            output.writeInt(1);
+            output.writeInt(2);
             output.writeUTF(manifest.transactionId);
             output.writeUTF(manifest.rootIdentity);
             output.writeUTF(manifest.logicalPath);
+            output.writeBoolean(manifest.existedBefore);
             output.writeUTF(manifest.preimageSha256);
             output.writeUTF(manifest.preimageIdentity);
             output.writeUTF(manifest.permissions);
             output.writeUTF(manifest.candidateSha256);
             output.writeUTF(manifest.resultIdentity);
+            output.writeInt(manifest.createdParents.size());
+            for (CreatedParent createdParent : manifest.createdParents) {
+                output.writeUTF(createdParent.logicalPath());
+                output.writeUTF(createdParent.identity());
+            }
             output.writeUTF(manifest.state.name());
             output.writeUTF(manifest.integrity());
         }
@@ -600,12 +812,31 @@ public final class ControlledExistingSkillService {
                 || Files.size(path) > 4096) throw new IOException("manifest");
         try (DataInputStream input = new DataInputStream(
                 new ByteArrayInputStream(Files.readAllBytes(path)))) {
-            if (!"ACW-CONTROLLED-SKILL".equals(input.readUTF()) || input.readInt() != 1) {
-                throw new IOException("manifest schema");
+            if (!"ACW-CONTROLLED-SKILL".equals(input.readUTF())) throw new IOException("manifest");
+            int schemaVersion = input.readInt();
+            if (schemaVersion == 1) return readManifestV1(input);
+            if (schemaVersion != 2) throw new IOException("manifest schema");
+            String transactionId = input.readUTF();
+            String rootIdentity = input.readUTF();
+            String logicalPath = input.readUTF();
+            boolean existedBefore = input.readBoolean();
+            String preimageSha256 = input.readUTF();
+            String preimageIdentity = input.readUTF();
+            String permissions = input.readUTF();
+            String candidateSha256 = input.readUTF();
+            String resultIdentity = input.readUTF();
+            int createdParentCount = input.readInt();
+            if (createdParentCount < 0 || createdParentCount > 3) {
+                throw new IOException("manifest parent count");
             }
-            Manifest manifest = new Manifest(input.readUTF(), input.readUTF(), input.readUTF(),
-                    input.readUTF(), input.readUTF(), input.readUTF(), input.readUTF(),
-                    input.readUTF(), State.valueOf(input.readUTF()));
+            List<CreatedParent> createdParents = new ArrayList<>();
+            for (int index = 0; index < createdParentCount; index++) {
+                createdParents.add(new CreatedParent(input.readUTF(), input.readUTF()));
+            }
+            Manifest manifest = new Manifest(transactionId, rootIdentity, logicalPath,
+                    existedBefore, preimageSha256, preimageIdentity, permissions,
+                    candidateSha256, resultIdentity, createdParents,
+                    State.valueOf(input.readUTF()));
             String integrity = input.readUTF();
             if (input.read() != -1 || !integrity.equals(manifest.integrity())) {
                 throw new IOException("manifest integrity");
@@ -613,6 +844,30 @@ public final class ControlledExistingSkillService {
             manifest.validate();
             return manifest;
         }
+    }
+
+    private static Manifest readManifestV1(DataInputStream input) throws IOException {
+        String transactionId = input.readUTF();
+        String rootIdentity = input.readUTF();
+        String logicalPath = input.readUTF();
+        String preimageSha256 = input.readUTF();
+        String preimageIdentity = input.readUTF();
+        String permissions = input.readUTF();
+        String candidateSha256 = input.readUTF();
+        String resultIdentity = input.readUTF();
+        State state = State.valueOf(input.readUTF());
+        String integrity = input.readUTF();
+        String expected = hash(tuple("controlled-manifest:v1", transactionId, rootIdentity,
+                logicalPath, preimageSha256, preimageIdentity, permissions,
+                candidateSha256, resultIdentity, state.name()));
+        if (input.read() != -1 || !integrity.equals(expected)) {
+            throw new IOException("manifest integrity");
+        }
+        Manifest manifest = new Manifest(transactionId, rootIdentity, logicalPath, true,
+                preimageSha256, preimageIdentity, permissions, candidateSha256,
+                resultIdentity, List.of(), state);
+        manifest.validate();
+        return manifest;
     }
 
     private static boolean validTransactionId(String value) {
@@ -653,34 +908,61 @@ public final class ControlledExistingSkillService {
     private enum State { APPLY_INTENT, APPLIED, ROLLED_BACK }
 
     private record Manifest(String transactionId, String rootIdentity, String logicalPath,
-            String preimageSha256, String preimageIdentity, String permissions,
-            String candidateSha256, String resultIdentity, State state) {
+            boolean existedBefore, String preimageSha256, String preimageIdentity, String permissions,
+            String candidateSha256, String resultIdentity, List<CreatedParent> createdParents,
+            State state) {
+        Manifest { createdParents = List.copyOf(createdParents); }
         Manifest applied(String identity) {
-            return new Manifest(transactionId, rootIdentity, logicalPath, preimageSha256,
-                    preimageIdentity, permissions, candidateSha256, identity, State.APPLIED);
+            return new Manifest(transactionId, rootIdentity, logicalPath, existedBefore, preimageSha256,
+                    preimageIdentity, permissions, candidateSha256, identity, createdParents,
+                    State.APPLIED);
         }
         Manifest rolledBack(String identity) {
-            return new Manifest(transactionId, rootIdentity, logicalPath, preimageSha256,
-                    preimageIdentity, permissions, candidateSha256, identity, State.ROLLED_BACK);
+            return new Manifest(transactionId, rootIdentity, logicalPath, existedBefore, preimageSha256,
+                    preimageIdentity, permissions, candidateSha256, identity, createdParents,
+                    State.ROLLED_BACK);
         }
         String integrity() {
             return hash(tuple("controlled-manifest:v1", transactionId, rootIdentity, logicalPath,
-                    preimageSha256, preimageIdentity, permissions, candidateSha256,
-                    resultIdentity, state.name()));
+                    Boolean.toString(existedBefore), preimageSha256, preimageIdentity, permissions, candidateSha256,
+                    resultIdentity, createdParents.stream()
+                            .map(parent -> parent.logicalPath() + "\n" + parent.identity())
+                            .reduce((left, right) -> left + "\n" + right).orElse(""),
+                    state.name()));
         }
         void validate() throws IOException {
             if (!validTransactionId(transactionId)
                     || !rootIdentity.matches("[0-9a-f]{64}")
                     || !logicalPath.matches(
                             "\\.agents/skills/[a-z0-9]+(?:-[a-z0-9]+)*/SKILL\\.md")
-                    || !preimageSha256.matches("[0-9a-f]{64}")
-                    || !preimageIdentity.matches("[0-9a-f]{64}")
+                    || (existedBefore && !preimageSha256.matches("[0-9a-f]{64}"))
+                    || (!existedBefore && !preimageSha256.isEmpty())
+                    || (existedBefore && !preimageIdentity.matches("[0-9a-f]{64}"))
+                    || (!existedBefore && !preimageIdentity.isEmpty())
                     || !candidateSha256.matches("[0-9a-f]{64}")
-                    || !resultIdentity.matches("[0-9a-f]{64}")) {
+                    || (!(state == State.ROLLED_BACK && !existedBefore && resultIdentity.isEmpty())
+                            && !resultIdentity.matches("[0-9a-f]{64}"))
+                    || createdParents.size() > 3
+                    || (existedBefore && !createdParents.isEmpty())
+                    || !validCreatedParents(logicalPath, createdParents)) {
                 throw new IOException("manifest fields");
             }
         }
     }
+
+    private static boolean validCreatedParents(String logicalPath, List<CreatedParent> parents) {
+        List<String> ancestors = List.of(".agents", ".agents/skills",
+                logicalPath.substring(0, logicalPath.length() - "/SKILL.md".length()));
+        int previous = -1;
+        for (CreatedParent parent : parents) {
+            int current = ancestors.indexOf(parent.logicalPath());
+            if (current <= previous || !parent.identity().matches("[0-9a-f]{64}")) return false;
+            previous = current;
+        }
+        return true;
+    }
+
+    private record CreatedParent(String logicalPath, String identity) { }
 
     private static final class Blocked extends Exception {
         private static final long serialVersionUID = 1L;

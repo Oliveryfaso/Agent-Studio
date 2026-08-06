@@ -343,6 +343,15 @@
 - 语义边界：`availableForPreview` 只表示 inventory 信息足以让用户选择并尝试真实预览，不承诺目标一定可替换；编码、换行、当前状态和最终 Apply eligibility 仍由已有 preview service 判断。INVALID 包可进入预览以便用完整候选修复，PARTIAL 包不可选择。
 - 原因：目标选择必须参与实际 path 推导，不能成为装饰；同时复用现有 content-free inventory 比另建目录列表扫描器更小，也保留稳定排序和 partial-result 语义。
 
+## ADR-040：真实单 Skill 入口以显式操作支持创建
+
+- 日期：2026-08-06
+- 状态：接受（过渡切片）
+- 决定：网页 preview/apply 必须显式携带 `CREATE` 或 `UPDATE`；旧 CLI 默认 `UPDATE` 保持兼容。`CREATE` 只接受 absent target，`UPDATE` 只接受 existing target，二者不能根据一次磁盘探测互相降级。创建计划使用 `READY_CREATE`、`--- /dev/null` Diff，并把操作、candidate、目标和缺失父目录拓扑绑定到 approval token。
+- 目录与回退：preview 不创建目录。Apply 在外置事务目录建立后逐层 `createDirectory` 并复验 containment/link 状态，manifest 记录本事务实际创建的目录；rollback 必须先匹配 apply 后的 identity/hash/权限，再删除候选，并只逆序删除记录中仍为空的目录。预先存在、被替换、成为链接或新增了内容的目录都不删除。
+- 产品取舍：创建和更新复用同一 Blueprint、renderer、Diff、批准、receipt 与 rollback 页面，不增加第二套向导。该能力仍只覆盖一个 Codex project `SKILL.md`；supporting files、多文件、Claude、LLM 与桌面打包不进入本切片。
+- 剩余边界：真实 manifest v2 仍没有接入 fixture v3 的完整 pending recovery 状态机，也不提供 OS conditional create/delete、directory fsync 或完整 Windows reparse 证明。因此它提升核心可用性，但不关闭 Gate 6。
+
 ## 待决问题
 
 - [ ] 为正式工程选择 Java 构建工具与最小模块骨架；当前纯 JDK 脚本仅服务 Phase 1 spike。

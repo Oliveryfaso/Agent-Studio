@@ -30,21 +30,24 @@ interface SkillInventoryResponse extends ApiErrorBody {
 }
 
 interface PreviewResponse extends ApiErrorBody {
+  operation: 'CREATE' | 'UPDATE'
   authorizedRoot: string | null
   targetPath: string | null
   exactReplacementDiff: string | null
   diffIncluded: boolean
   plan: {
     planId: string
-    status: 'READY_REPLACE' | 'NO_CHANGE' | 'BLOCKED'
+    status: 'READY_CREATE' | 'READY_REPLACE' | 'NO_CHANGE' | 'BLOCKED'
     logicalPath: string
     approvalToken: string | null
     blockedReason: string | null
+    missingParentDirectories: string[]
     applyEligible: boolean
   }
 }
 
 interface ApplyResponse extends ApiErrorBody {
+  operation: 'CREATE' | 'UPDATE'
   status: 'VERIFIED_APPLIED' | 'APPROVAL_MISMATCH' | 'STALE_PREIMAGE' | 'BLOCKED' | 'WRITE_FAILED' | 'RECOVERY_REQUIRED'
   transactionId: string | null
   planId: string
@@ -70,6 +73,7 @@ interface RollbackAnchor {
   transactionId: string
   workspacePath: string
   targetPath: string
+  operation: 'CREATE' | 'UPDATE'
 }
 
 const sessionToken = ref(readAndForgetToken())
@@ -79,6 +83,7 @@ const skillInventory = ref<SkillInventoryResponse | null>(null)
 const inventoryWorkspace = ref('')
 const inventoryError = ref('')
 const selectedInventoryName = ref('')
+const operationMode = ref<'update' | 'create'>('update')
 let inventorySequence = 0
 const inputMode = ref<'form' | 'advanced'>('form')
 const skillForm = reactive(emptySkillForm())
@@ -96,8 +101,13 @@ const selectedInventorySkill = computed(() => skillInventory.value?.skills
   .find(skill => skill.name === selectedInventoryName.value) ?? null)
 const inventorySelectionIssue = computed(() => {
   if (inventoryPhase.value !== 'ready') return ''
-  if (!selectedInventorySkill.value) return '请从项目列表中选择要更新的 Skill。'
   const requestName = inputMode.value === 'form' ? skillForm.name.trim() : advancedSkillName.value
+  if (operationMode.value === 'create') {
+    if (!requestName) return '请填写新 Skill 的文件名称。'
+    return skillInventory.value?.skills.some(skill => skill.name === requestName)
+      ? '项目中已有同名 Skill，请更换名称或切换到更新模式。' : ''
+  }
+  if (!selectedInventorySkill.value) return '请从项目列表中选择要更新的 Skill。'
   return requestName === selectedInventorySkill.value.name
     ? '' : '配置中的文件名称与所选 Skill 不一致。'
 })
@@ -119,7 +129,7 @@ const busy = computed(() => phase.value !== 'idle')
 const canLoadInventory = computed(() => Boolean(
   sessionToken.value && workspacePath.value.trim() && inventoryPhase.value !== 'loading',
 ))
-const currentSignature = computed(() => `${workspacePath.value}\u0000${guidedRequest.value}`)
+const currentSignature = computed(() => `${operationMode.value}\u0000${workspacePath.value}\u0000${guidedRequest.value}`)
 const canPreview = computed(() => Boolean(
   sessionToken.value
   && workspacePath.value.trim()
@@ -134,8 +144,8 @@ const hasActiveRollback = computed(() => Boolean(
   && !['ROLLED_BACK', 'ALREADY_ROLLED_BACK'].includes(rollbackReceipt.value?.status ?? ''),
 ))
 const canApply = computed(() => Boolean(
-  preview.value?.plan.status === 'READY_REPLACE'
-  && preview.value.plan.approvalToken
+  ['READY_CREATE', 'READY_REPLACE'].includes(preview.value?.plan.status ?? '')
+  && preview.value?.plan.approvalToken
   && previewSignature.value === currentSignature.value
   && confirmed.value
   && !hasActiveRollback.value
@@ -152,7 +162,7 @@ const recordStatusLabel = computed(() => rollbackReceipt.value
   ? rollbackStatusLabel(rollbackReceipt.value.status)
   : applyReceipt.value ? applyStatusLabel(applyReceipt.value.status) : '')
 
-watch([workspacePath, guidedRequest], () => {
+watch([workspacePath, guidedRequest, operationMode], () => {
   if (preview.value && previewSignature.value !== currentSignature.value) {
     preview.value = null
     previewSignature.value = ''
@@ -197,6 +207,20 @@ function fillExample(): void {
   setMessage('示例已填入，可以直接预览，也可以按项目情况修改。', 'neutral')
 }
 
+function selectOperation(mode: 'update' | 'create'): void {
+  if (operationMode.value === mode) return
+  const selectedName = selectedInventoryName.value
+  operationMode.value = mode
+  if (mode === 'create') {
+    if (skillForm.name === selectedName) skillForm.name = ''
+    selectedInventoryName.value = ''
+    setMessage('填写名称和内容，预览将要创建的新文件。', 'neutral')
+  } else {
+    skillForm.name = selectedName
+    setMessage('从项目列表中选择要更新的 Skill。', 'neutral')
+  }
+}
+
 async function loadSkillInventory(): Promise<void> {
   const workspace = workspacePath.value.trim()
   if (!sessionToken.value) {
@@ -223,8 +247,16 @@ async function loadSkillInventory(): Promise<void> {
     const retained = result.skills.find(skill =>
       skill.name === selectedInventoryName.value && skill.availableForPreview)
     if (!retained) {
-      if (skillForm.name === selectedInventoryName.value) skillForm.name = ''
+      if (result.skills.length > 0 && skillForm.name === selectedInventoryName.value) {
+        skillForm.name = ''
+      }
       selectedInventoryName.value = ''
+    }
+    if (result.skills.length === 0 && result.status === 'COMPLETE') {
+      operationMode.value = 'create'
+      setMessage('这个项目还没有 Skill，可以直接创建第一个。', 'neutral')
+    } else if (operationMode.value === 'update' && !retained) {
+      setMessage('项目已读取，请选择要更新的 Skill。', 'neutral')
     }
     inventoryWorkspace.value = workspace
     inventoryPhase.value = 'ready'
@@ -239,6 +271,7 @@ async function loadSkillInventory(): Promise<void> {
 function selectInventorySkill(skill: SkillInventoryResponse['skills'][number]): void {
   if (!skill.availableForPreview) return
   selectedInventoryName.value = skill.name
+  operationMode.value = 'update'
   skillForm.name = skill.name
   selectInputMode('form')
   setMessage(`已选择 ${skill.name}，请填写或检查其余内容。`, 'neutral')
@@ -319,6 +352,7 @@ async function requestPreview(): Promise<void> {
       workspacePath: workspacePath.value.trim(),
       guidedRequest: guidedRequest.value,
       includeDiff: true,
+      operation: operationMode.value === 'create' ? 'CREATE' : 'UPDATE',
     })
     preview.value = result
     previewSignature.value = currentSignature.value
@@ -329,7 +363,9 @@ async function requestPreview(): Promise<void> {
     } else if (hasActiveRollback.value) {
       setMessage('预览已生成。请先处理上一条恢复记录，再应用新的更改。', 'warning')
     } else {
-      setMessage('预览已生成，请检查目标文件和差异。', 'success')
+      setMessage(result.plan.status === 'READY_CREATE'
+        ? '新文件预览已生成，请检查路径和内容。'
+        : '预览已生成，请检查目标文件和差异。', 'success')
     }
   } catch (error) {
     setMessage(errorMessage(error), 'danger')
@@ -353,6 +389,7 @@ async function applyChange(): Promise<void> {
       workspacePath: workspacePath.value.trim(),
       guidedRequest: guidedRequest.value,
       approvalToken: preview.value.plan.approvalToken,
+      operation: operationMode.value === 'create' ? 'CREATE' : 'UPDATE',
     })
     applyReceipt.value = result
     if (result.status === 'VERIFIED_APPLIED' && result.transactionId && result.rollbackAvailable) {
@@ -360,6 +397,7 @@ async function applyChange(): Promise<void> {
         transactionId: result.transactionId,
         workspacePath: approvedWorkspacePath,
         targetPath: approvedTargetPath,
+        operation: result.operation,
       }
       rollbackReceipt.value = null
     }
@@ -368,6 +406,13 @@ async function applyChange(): Promise<void> {
     previewSignature.value = ''
     const tone = result.status === 'VERIFIED_APPLIED' ? 'success'
       : result.status === 'RECOVERY_REQUIRED' ? 'danger' : 'warning'
+    if (result.status === 'VERIFIED_APPLIED') {
+      await loadSkillInventory()
+      if (result.operation === 'CREATE') {
+        const created = skillInventory.value?.skills.find(skill => skill.logicalPath === result.logicalPath)
+        if (created) selectInventorySkill(created)
+      }
+    }
     setMessage(applyStatus(result), tone)
   } catch (error) {
     setMessage(errorMessage(error), 'danger')
@@ -392,6 +437,9 @@ async function rollbackChange(): Promise<void> {
     rollbackReceipt.value = result
     const tone = ['ROLLED_BACK', 'ALREADY_ROLLED_BACK'].includes(result.status) ? 'success'
       : result.status === 'RECOVERY_REQUIRED' ? 'danger' : 'warning'
+    if (['ROLLED_BACK', 'ALREADY_ROLLED_BACK'].includes(result.status)) {
+      await loadSkillInventory()
+    }
     setMessage(rollbackStatus(result), tone)
   } catch (error) {
     setMessage(errorMessage(error), 'danger')
@@ -410,7 +458,9 @@ function finishRollbackWindow(): void {
 
 function applyStatus(receipt: ApplyResponse): string {
   switch (receipt.status) {
-    case 'VERIFIED_APPLIED': return '更改已应用，并已保存恢复副本。'
+    case 'VERIFIED_APPLIED': return receipt.operation === 'CREATE'
+      ? 'Skill 已创建，并已保存撤销记录。'
+      : '更改已应用，并已保存恢复副本。'
     case 'STALE_PREIMAGE': return '预览后文件发生了变化。未写入，请重新预览。'
     case 'APPROVAL_MISMATCH': return '这份预览已经失效。未写入，请重新预览。'
     case 'BLOCKED': return `无法应用：${detailLabel(receipt.detail)}`
@@ -421,8 +471,10 @@ function applyStatus(receipt: ApplyResponse): string {
 
 function rollbackStatus(receipt: RollbackResponse): string {
   switch (receipt.status) {
-    case 'ROLLED_BACK': return '原文件已恢复。'
-    case 'ALREADY_ROLLED_BACK': return '原文件此前已经恢复，无需重复操作。'
+    case 'ROLLED_BACK': return rollbackAnchor.value?.operation === 'CREATE'
+      ? '本次创建的 Skill 已移除。' : '原文件已恢复。'
+    case 'ALREADY_ROLLED_BACK': return rollbackAnchor.value?.operation === 'CREATE'
+      ? '本次创建此前已经撤销。' : '原文件此前已经恢复，无需重复操作。'
     case 'CURRENT_TARGET_CHANGED': return '文件在应用后又被其他程序修改，为避免覆盖，未执行恢复。'
     case 'RECOVERY_REQUIRED': return `恢复结果需要人工检查。请保留记录编号 ${receipt.transactionId}。`
     case 'INVALID_TRANSACTION': return '找不到对应的恢复记录，或记录与当前项目不匹配。'
@@ -431,7 +483,7 @@ function rollbackStatus(receipt: RollbackResponse): string {
 }
 
 function previewStatusLabel(status: PreviewResponse['plan']['status']): string {
-  return { READY_REPLACE: '可以应用', NO_CHANGE: '无需更改', BLOCKED: '无法处理' }[status]
+  return { READY_CREATE: '可以创建', READY_REPLACE: '可以更新', NO_CHANGE: '无需更改', BLOCKED: '无法处理' }[status]
 }
 
 function applyStatusLabel(status: ApplyResponse['status']): string {
@@ -447,8 +499,8 @@ function applyStatusLabel(status: ApplyResponse['status']): string {
 
 function rollbackStatusLabel(status: RollbackResponse['status']): string {
   return {
-    ROLLED_BACK: '已恢复',
-    ALREADY_ROLLED_BACK: '已恢复',
+    ROLLED_BACK: rollbackAnchor.value?.operation === 'CREATE' ? '已撤销' : '已恢复',
+    ALREADY_ROLLED_BACK: rollbackAnchor.value?.operation === 'CREATE' ? '已撤销' : '已恢复',
     CURRENT_TARGET_CHANGED: '文件已再次变化',
     INVALID_TRANSACTION: '找不到恢复记录',
     WRITE_FAILED: '恢复失败',
@@ -459,6 +511,7 @@ function rollbackStatusLabel(status: RollbackResponse['status']): string {
 function detailLabel(value: string): string {
   const labels: Record<string, string> = {
     EXISTING_TARGET_REQUIRED: '目标 Skill 文件不存在',
+    CREATE_TARGET_ALREADY_EXISTS: '目标 Skill 已存在',
     TARGET_MUST_BE_UTF8_LF_WITH_FINAL_NEWLINE: '文件格式暂不支持',
     TARGET_LINK_OR_REPARSE: '目标文件是链接或重解析点',
     TARGET_NOT_BOUNDED_REGULAR_FILE: '目标不是受支持的普通文件',
@@ -469,6 +522,7 @@ function detailLabel(value: string): string {
     TARGET_PARENT_MISSING_OR_UNSAFE: '目标目录不存在或不安全',
     CONTROLLED_APPLY_VERIFIED: '文件已写入并校验',
     CONTROLLED_ROLLBACK_VERIFIED: '原文件已恢复并校验',
+    CONTROLLED_CREATE_ROLLBACK_VERIFIED: '本次创建已撤销并校验',
   }
   return labels[value] ?? '操作未完成，请查看技术详情'
 }
@@ -514,7 +568,7 @@ function errorMessage(error: unknown): string {
                 {{ inventoryPhase === 'loading' ? '正在读取…' : inventoryPhase === 'error' ? '重试' : '读取 Skill' }}
               </button>
             </div>
-            <small>当前仅支持修改已有的 .agents/skills/&lt;名称&gt;/SKILL.md</small>
+            <small>支持创建或更新一个 .agents/skills/&lt;名称&gt;/SKILL.md</small>
 
             <div v-if="inventoryPhase !== 'idle'" class="skill-picker" :class="inventoryPhase" :aria-busy="inventoryPhase === 'loading'">
               <p v-if="inventoryPhase === 'loading'">正在读取项目中的 Skill…</p>
@@ -526,9 +580,13 @@ function errorMessage(error: unknown): string {
                   <strong>只读取到部分结果</strong><span>仍可选择下列状态完整的 Skill。</span>
                 </div>
                 <div v-if="skillInventory.skills.length === 0" class="picker-message">
-                  <strong>没有找到已有 Skill</strong><span>当前版本还不能在这里创建第一个 Skill。</span>
+                  <strong>这个项目还没有 Skill</strong><span>填写下面的内容即可创建第一个。</span>
                 </div>
-                <template v-else>
+                <div v-if="skillInventory.skills.length > 0" class="mode-switch operation-switch" aria-label="文件操作">
+                  <button type="button" :class="{ active: operationMode === 'update' }" :aria-pressed="operationMode === 'update'" :disabled="busy" @click="selectOperation('update')">更新已有</button>
+                  <button type="button" :class="{ active: operationMode === 'create' }" :aria-pressed="operationMode === 'create'" :disabled="busy" @click="selectOperation('create')">新建 Skill</button>
+                </div>
+                <template v-if="skillInventory.skills.length > 0 && operationMode === 'update'">
                   <label class="picker-select">
                     <span>要更新的 Skill</span>
                     <select :value="selectedInventoryName" @change="handleInventorySelection">
@@ -567,7 +625,7 @@ function errorMessage(error: unknown): string {
               <details class="form-section" open>
                 <summary>基本信息</summary>
                 <div class="form-fields">
-                  <label class="field"><span>文件名称</span><input v-model="skillForm.name" type="text" maxlength="63" autocomplete="off" spellcheck="false" placeholder="review-api-change" :disabled="busy" :readonly="inventoryPhase === 'ready'" /><small>{{ targetSkillLogicalPath || '小写英文、数字和连字符' }}</small></label>
+                  <label class="field"><span>文件名称</span><input v-model="skillForm.name" type="text" maxlength="63" autocomplete="off" spellcheck="false" placeholder="review-api-change" :disabled="busy" :readonly="inventoryPhase === 'ready' && operationMode === 'update'" /><small>{{ targetSkillLogicalPath || '小写英文、数字和连字符' }}</small></label>
                   <label class="field"><span>用途说明</span><input v-model="skillForm.description" class="plain-input" type="text" maxlength="2048" placeholder="检查 API 变更的兼容性与风险" :disabled="busy" /></label>
                   <label class="field"><span>完成目标</span><textarea v-model="skillForm.goal" class="short-textarea" rows="2" maxlength="2048" placeholder="最终要交付什么结果" :disabled="busy" /></label>
                   <div class="paired-fields">
@@ -646,6 +704,13 @@ function errorMessage(error: unknown): string {
               <div><dt>状态</dt><dd><span class="pill" :class="preview.plan.status.toLowerCase()">{{ previewStatusLabel(preview.plan.status) }}</span></dd></div>
               <div><dt>目标文件</dt><dd class="mono">{{ preview.targetPath ?? preview.plan.logicalPath }}</dd></div>
             </dl>
+            <div v-if="preview.plan.status === 'READY_CREATE'" class="creation-paths">
+              <strong>将创建的目录</strong>
+              <ul v-if="preview.plan.missingParentDirectories.length">
+                <li v-for="path in preview.plan.missingParentDirectories" :key="path" class="mono">{{ path }}</li>
+              </ul>
+              <small v-else>目标目录已存在，不需要创建目录。</small>
+            </div>
             <details class="technical-details">
               <summary>技术详情</summary>
               <div><span>预览编号</span><code>{{ preview.plan.planId }}</code></div>
@@ -655,20 +720,20 @@ function errorMessage(error: unknown): string {
 
             <div v-if="preview.exactReplacementDiff" class="diff-card">
               <div class="diff-toolbar">
-                <div><strong>文件差异</strong><small>检查将删除和新增的内容</small></div>
+                <div><strong>{{ preview.plan.status === 'READY_CREATE' ? '新文件内容' : '文件差异' }}</strong><small>{{ preview.plan.status === 'READY_CREATE' ? '检查将写入的新文件' : '检查将删除和新增的内容' }}</small></div>
                 <label class="switch"><input v-model="wrapDiff" type="checkbox" /><span>自动换行</span></label>
               </div>
               <pre tabindex="0" :class="{ wrapped: wrapDiff }" aria-label="完整文件差异"><code>{{ preview.exactReplacementDiff }}</code></pre>
             </div>
 
-            <div v-if="preview.plan.status === 'READY_REPLACE'" class="approval">
+            <div v-if="['READY_CREATE', 'READY_REPLACE'].includes(preview.plan.status)" class="approval">
               <label>
                 <input v-model="confirmed" type="checkbox" />
-                <span><strong>我已检查目标文件和以上差异</strong><small>应用后会替换这个 SKILL.md，并保存恢复副本。</small></span>
+                <span><strong>{{ preview.plan.status === 'READY_CREATE' ? '我已检查新文件路径和以上内容' : '我已检查目标文件和以上差异' }}</strong><small>{{ preview.plan.status === 'READY_CREATE' ? '创建后可以在下方撤销本次创建。' : '应用后会替换这个 SKILL.md，并保存恢复副本。' }}</small></span>
               </label>
               <button class="danger-button" type="button" :disabled="!canApply" @click="applyChange">
                 <span v-if="phase === 'applying'" class="spinner" aria-hidden="true" />
-                {{ phase === 'applying' ? '正在应用…' : '应用更改' }}
+                {{ phase === 'applying' ? (preview.plan.status === 'READY_CREATE' ? '正在创建…' : '正在应用…') : (preview.plan.status === 'READY_CREATE' ? '创建 Skill' : '应用更改') }}
               </button>
             </div>
           </template>
@@ -711,7 +776,7 @@ function errorMessage(error: unknown): string {
               <div class="rollback-actions">
                 <button class="secondary" type="button" :disabled="!canRollback" @click="rollbackChange">
                   <span v-if="phase === 'rolling-back'" class="spinner dark" aria-hidden="true" />
-                  {{ phase === 'rolling-back' ? '正在恢复…' : '恢复原文件' }}
+                  {{ phase === 'rolling-back' ? '正在处理…' : (rollbackAnchor.operation === 'CREATE' ? '撤销创建' : '恢复原文件') }}
                 </button>
                 <button v-if="hasActiveRollback" class="quiet-button" type="button" :disabled="busy" @click="finishRollbackWindow">
                   保留更改，不再显示恢复操作

@@ -389,3 +389,11 @@
 - 页面在项目路径后显式读取 Skill，以原生选择器显示稳定排序结果；选择后锁定普通表单名称并显示逻辑路径。高级配置名称不一致会直接阻止预览，workspace 变化会清空旧列表和选择，迟到响应不会覆盖新项目。
 - `availableForPreview` 不等于可应用：INVALID 可以选择以尝试修复，PARTIAL 不可选择，真实 preview 继续决定编码、换行和替换资格。新增 3 项 HTTP fixture 后本地 Java 测试为 274 项。
 - Vue build/typecheck、两个 Skill 的读取/选择/目标预览、高级模式不一致阻断和 360px 布局通过。Gate 7 的“已有目标发现”完成，下一产品缺口是空项目创建第一个 Skill。
+
+## 2026-08-06：打通空项目创建第一个 Skill
+
+- Vue 增加显式“更新已有 / 新建 Skill”模式；空 inventory 自动进入新建。操作类型进入 preview/apply 请求和 approval identity，不从目标是否存在推断。
+- 真实事务增加 `READY_CREATE`：preview 保持零写并输出 `/dev/null` 新文件 Diff和每个缺失父目录；apply 逐层创建经过复验的目录，不使用宽泛 `createDirectories`，目标已存在即拒绝。
+- manifest 升为 v2，区分 absent/existing preimage 并记录本事务实际创建的父目录。创建 rollback 只有在 candidate identity/hash/权限都未变化时才删除文件，并逆序清理本事务创建且仍为空的目录；已有目录和非空目录不删除。
+- 页面在创建后刷新 inventory 并转入已选中的更新状态；撤销创建后刷新空状态，同时保留用户填写的其余表单内容。真实浏览器已完成空项目 preview → create → inventory refresh → undo 流程。
+- 新增 4 项 HTTP 端到端 fixture，覆盖完整创建/撤销、目标冲突、父目录拓扑变化、父目录 identity 替换和旧 v1 更新事务回退兼容；本地 Java 测试为 278 项，conformance 保持 27 项，Vue typecheck/build 通过。Gate 6 仍因 crash recovery、OS CAS、durability 与 Windows reparse 保持部分开放；下一产品切片是读取并回填已有 Skill。

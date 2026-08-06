@@ -6,6 +6,7 @@ import dev.agentconfig.workbench.skill.CodexSkillInventoryService;
 import dev.agentconfig.workbench.skilldraft.CodexSkillDraftPreview;
 import dev.agentconfig.workbench.skilldraft.CodexSkillDraftService;
 import dev.agentconfig.workbench.transaction.ControlledExistingSkillService;
+import dev.agentconfig.workbench.transaction.ControlledExistingSkillService.Mode;
 import dev.agentconfig.workbench.transaction.ControlledSkillApplyReceipt;
 import dev.agentconfig.workbench.transaction.ControlledSkillChangePlan;
 import dev.agentconfig.workbench.transaction.ControlledSkillRollbackReceipt;
@@ -21,7 +22,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
-/** Typed HTTP projection over Codex Skill inventory and the existing-Skill workflow. */
+/** Typed HTTP projection over Codex Skill inventory and the single-Skill workflow. */
 final class SkillChangeHttpApi {
     private final Path stateRoot;
 
@@ -82,16 +83,18 @@ final class SkillChangeHttpApi {
 
     ApiResponse preview(Map<String, Object> request, String requestId) {
         try {
-            allowKeys(request, Set.of("hostId", "workspacePath", "guidedRequest", "includeDiff"));
+            allowKeys(request, Set.of("hostId", "workspacePath", "guidedRequest", "includeDiff",
+                    "operation"));
             requireHost(request);
             Path workspace = path(request, "workspacePath");
             String guidedRequest = text(request, "guidedRequest", 32 * 1024);
             boolean includeDiff = bool(request, "includeDiff", false);
+            Mode mode = mode(request);
             PreparedControlledSkillChange prepared = new ControlledExistingSkillService()
-                    .prepare(workspace, draft(guidedRequest));
+                    .prepare(workspace, draft(guidedRequest), mode);
             ControlledSkillChangePlan plan = prepared.plan();
             int status = switch (plan.status()) {
-                case READY_REPLACE, NO_CHANGE -> 200;
+                case READY_CREATE, READY_REPLACE, NO_CHANGE -> 200;
                 case BLOCKED -> 422;
             };
             String canonicalRoot = plan.status() == ControlledSkillChangePlan.Status.BLOCKED
@@ -102,6 +105,7 @@ final class SkillChangeHttpApi {
                     ? prepared.exactReplacementDiff().orElseThrow() : null;
             StringBuilder json = begin(requestId, "skill-change-preview")
                     .append("  \"hostId\": \"codex\",\n")
+                    .append("  \"operation\": ").append(json(operation(mode))).append(",\n")
                     .append("  \"authorizedRoot\": ").append(nullable(canonicalRoot)).append(",\n")
                     .append("  \"targetPath\": ").append(nullable(target)).append(",\n")
                     .append("  \"plan\": {\n")
@@ -113,7 +117,14 @@ final class SkillChangeHttpApi {
                     .append("    \"diffSha256\": ").append(optional(plan.diffSha256())).append(",\n")
                     .append("    \"approvalToken\": ").append(optional(plan.approvalToken())).append(",\n")
                     .append("    \"blockedReason\": ").append(optional(plan.blockedReason())).append(",\n")
-                    .append("    \"existingTargetRequired\": true,\n")
+                    .append("    \"missingParentDirectories\": [");
+            for (int index = 0; index < plan.missingParentDirectories().size(); index++) {
+                if (index > 0) json.append(", ");
+                json.append(json(plan.missingParentDirectories().get(index)));
+            }
+            json.append("],\n")
+                    .append("    \"existingTargetRequired\": ")
+                    .append(mode == Mode.UPDATE_EXISTING).append(",\n")
                     .append("    \"applyEligible\": ").append(plan.applyEligible()).append(",\n")
                     .append("    \"writesPerformed\": false\n")
                     .append("  },\n")
@@ -130,13 +141,14 @@ final class SkillChangeHttpApi {
     ApiResponse apply(Map<String, Object> request, String requestId) {
         try {
             allowKeys(request, Set.of("hostId", "workspacePath", "guidedRequest",
-                    "approvalToken"));
+                    "approvalToken", "operation"));
             requireHost(request);
             Path workspace = path(request, "workspacePath");
             String guidedRequest = text(request, "guidedRequest", 32 * 1024);
             String approvalToken = text(request, "approvalToken", 128);
+            Mode mode = mode(request);
             ControlledSkillApplyReceipt receipt = new ControlledExistingSkillService().apply(
-                    workspace, stateRoot, draft(guidedRequest), approvalToken);
+                    workspace, stateRoot, draft(guidedRequest), mode, approvalToken);
             int status = switch (receipt.status()) {
                 case VERIFIED_APPLIED -> 200;
                 case APPROVAL_MISMATCH, STALE_PREIMAGE -> 409;
@@ -145,6 +157,7 @@ final class SkillChangeHttpApi {
                 case RECOVERY_REQUIRED -> 503;
             };
             String json = begin(requestId, "skill-change-apply")
+                    .append("  \"operation\": ").append(json(operation(mode))).append(",\n")
                     .append("  \"status\": ").append(json(receipt.status().name())).append(",\n")
                     .append("  \"transactionId\": ").append(optional(receipt.transactionId())).append(",\n")
                     .append("  \"planId\": ").append(json(receipt.planId())).append(",\n")
@@ -201,6 +214,17 @@ final class SkillChangeHttpApi {
         if (!"codex".equals(text(request, "hostId", 32))) {
             throw new IllegalArgumentException("hostId");
         }
+    }
+
+    private static Mode mode(Map<String, Object> request) {
+        Object value = request.get("operation");
+        if (value == null || "UPDATE".equals(value)) return Mode.UPDATE_EXISTING;
+        if ("CREATE".equals(value)) return Mode.CREATE_NEW;
+        throw new IllegalArgumentException("operation");
+    }
+
+    private static String operation(Mode mode) {
+        return mode == Mode.CREATE_NEW ? "CREATE" : "UPDATE";
     }
 
     private static void allowKeys(Map<String, Object> request, Set<String> allowed) {

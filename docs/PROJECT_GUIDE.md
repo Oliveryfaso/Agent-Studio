@@ -887,23 +887,23 @@ redaction profile + consent scope + retention class
 - vault、journal、snapshot、atomic replace、故障注入与启动恢复。
 - byte-identical rollback 与并发阻断达到门槛。
 
-### Phase 6：真实工作区 Apply（过渡切片进行中）
+### Phase 6：真实工作区 Apply（单 Skill 创建/更新已接通）
 
 - 原生编辑和转换结果统一经过逐能力授权、明确批准、真实配置应用与 post-validate。
 - 先开放 Codex/Claude；Wave 1 逐个通过 native validator、round-trip 与权限差异 gate 后再开放，不捆绑发布。
 - Recovery Center 与脱敏审计。
-- 当前只开放 Codex project 中一个已存在 Skill 的替换：显式 workspace、真实完整 Diff、approval token、外置可信 state root、原始字节快照、原子替换、post-validate 与 guarded rollback。创建/多文件、自动恢复、跨进程 CAS 与完整 Windows reparse 仍关闭。
+- 当前只开放 Codex project 中一个 Skill 的显式创建或更新：创建绑定 absent target 与缺失父目录，更新绑定真实 preimage；两者都有完整 Diff、approval token、外置可信 state root、post-validate 与 guarded rollback。多文件、自动恢复、跨进程 CAS 与完整 Windows reparse 仍关闭。
 
 ### Phase 6.5：本地 UI 单页闭环（实验入口完成）
 
 - Java 21 `HttpServer` 只绑定 `127.0.0.1` 随机端口；state root 是进程启动参数，不由单次浏览器请求选择。
 - `/api/v1/runtime`、`skills/inventory` 与 `skill-changes/preview|apply|rollback` 返回 typed HTTP schema v1；HTTP controller 直接调用既有 Inventory、Blueprint、Draft 与 Controlled service，不启动子进程、不解析 CLI stdout。Inventory core 仍保留自己的 schema v2，不与 HTTP envelope 混称。
 - mutation endpoint 同时校验精确 Host、同源 Origin 和 256-bit 进程期 bearer token，不发送宽泛 CORS。48 KiB body budget、严格 UTF-8/flat JSON 与稳定 error envelope 已进入 fixture。
-- Vue 3 + TypeScript 单页现已完成 workspace/已有 Skill 读取与选择/普通 Skill 表单、真实 Diff、确认、apply receipt 与 rollback；表单确定性生成 guided request，并提供完整示例、即时检查与高级原始配置入口。选择的目录名必须与最终 request name 一致，输入变化会废弃旧 preview/approval，并明确显示 empty/partial/error/blocked/no-change/stale/current-target-changed/recovery/network 状态。
-- 界面采用本地桌面工作台布局：桌面端左侧读取并选择已有 Skill、填写内容，右侧查看状态、文件差异和应用记录；窄屏退回单列。普通界面使用中文产品状态，后端状态码和结果码只放在折叠的“技术详情”中。下一项产品入口工作是让空项目创建第一个 Skill。
+- Vue 3 + TypeScript 单页现已完成 workspace/Skill inventory、显式创建或更新模式、普通 Skill 表单、真实 Diff、确认、apply receipt 与 rollback；空项目直接进入创建模式，预览列出缺失目录，创建/撤销后自动刷新列表。操作模式与输入变化都会废弃旧 preview/approval，并明确显示 empty/partial/error/blocked/no-change/stale/current-target-changed/recovery/network 状态。
+- 界面采用本地桌面工作台布局：桌面端左侧选择操作、目标与内容，右侧查看状态、文件差异和应用记录；窄屏退回单列。普通界面使用中文产品状态，后端状态码和结果码只放在折叠的“技术详情”中。下一项产品入口工作是读取并回填已有 Skill 内容，让“更新”成为真正的日常编辑流程。
 - Java 进程同源托管 `ui/dist` 的窄白名单静态资源。启动链接只在 fragment 中携带 token；Vue 读取后立即清除 fragment，并只把 token 保存在页面内存。
 - `scripts/build-ui.sh` 使用 lockfile 安装并构建；`scripts/run-local-web.sh <trusted-state-root>` 编译 Java 并启动页面。Vue/Vite/TypeScript/vue-tsc 是仅限 `ui/` 的必要构建依赖，不进入安全关键 Java 核心。
-- 当前仍不能创建第一个 Skill，也没有系统文件夹选择器、history database、Recovery Center、桌面壳或安装包；关闭/刷新页面后必须使用当前进程打印的新启动链接重新进入。
+- 当前仍不会读取并回填已有 Skill 正文，也没有系统文件夹选择器、可重启恢复入口、桌面壳或安装包；关闭/刷新页面后必须使用当前进程打印的新启动链接重新进入。
 
 ### Phase 7：Wave 2 preview、可选 AI 和 Prompt Export
 
@@ -921,12 +921,12 @@ redaction profile + consent scope + retention class
 - S0：Codex Skill package 只读 inventory 与引用图。
 - S1：自然语言/向导 → persistence classification → `SkillBlueprint v1`，preview-only。
 - S2：确定性模板、内存候选、最终字节静态校验与 stdout Diff/export。已完成。
-- S3：fixture 单文件事务恢复与 pending discovery 已完成；真实 existing-Skill 过渡入口已接通 preview/apply/rollback。
+- S3：fixture 单文件事务恢复与 pending discovery 已完成；真实单 Skill 创建/更新入口已接通 preview/apply/rollback。
 - S4：同一闭环扩展到 AGENTS、Agent TOML 与 Rule/Policy。
 - S5：Claude 同等闭环。
 - S6：依据用户证据解冻其他宿主、Router、eval、history 和跨宿主能力。
 
-当前状态：Codex `inspect` 与 Skill S0–S2 已完成最小纵向切片。S3 fixture API 使用 manifest v3 闭合进程崩溃窗口并支持显式 pending discovery；在它之上新增的真实过渡入口可接受普通用户明确授权的项目，但只替换一个已存在的 Codex Skill。入口重新生成候选与 plan、要求独立 approval token、使用 workspace 外可信 state root，并提供 transaction rollback。它暂不承诺进程中断后的自动恢复、断电持久性或跨进程条件替换。3+3 仍是静态契约，不是已运行的模型路由 eval。
+当前状态：Codex `inspect` 与 Skill S0–S2 已完成最小纵向切片。S3 fixture API 使用 manifest v3 闭合进程崩溃窗口并支持显式 pending discovery；真实过渡入口可在普通用户明确授权的项目中创建或更新一个 Codex Skill。入口重新生成候选与 plan、要求独立 approval token、使用 workspace 外可信 state root，并提供 transaction rollback。它暂不承诺进程中断后的自动恢复、断电持久性或跨进程条件替换。3+3 仍是静态契约，不是已运行的模型路由 eval。
 
 ### 当前 Gate 状态（2026-08-06）
 
@@ -937,8 +937,8 @@ redaction profile + consent scope + retention class
 | Gate 3 | Codex/Claude 项目语义读取与 IR | 实验性纵向切片完成 | 用户/managed 层、完整配置合并、外部批准、lossless parser/native validation；整体 adapter 仍为 Inventory |
 | Gate 4 | 双向转换预览 | canonical Codex root wrapper 纵向切片已验证；能力冻结 | 只有核心闭环验证后才复审通用/反向 renderer |
 | Gate 5 | ChangeSet、快照、事务与恢复 | fixture apply/rollback 进程恢复 + 显式 pending discovery 完成 | 断电持久性、OS 级 CAS/dir-handle-relative 防 TOCTOU、Windows reparse/junction、长期 vault；尚无自动启动恢复 |
-| Gate 6 | 真实工作区 Apply | 部分开放：existing Codex Skill 单文件 CLI + Vue 审阅/批准/回退 | 自动恢复、创建/多文件、跨进程 CAS、Windows reparse 与分发加固 |
-| Gate 7 | UI、Wave 1、GitHub/分发 | 单页实验入口可用：已有 Skill 发现/选择、普通表单、真实 Diff/apply/rollback 已接通 typed loopback；GitHub 发布基线完成 | 创建第一个 Skill、系统 workspace picker、其他宿主语义、PR 导出、桌面安装包、签名/SBOM |
+| Gate 6 | 真实工作区 Apply | 部分开放：Codex 单 Skill 创建/更新、真实 Diff、批准与回退已接通；CLI 继续只更新已有目标 | 自动恢复、多文件、跨进程 CAS、Windows reparse 与分发加固 |
+| Gate 7 | UI、Wave 1、GitHub/分发 | 核心单页流程可用：inventory、创建/更新模式、普通表单、真实 Diff/apply/rollback 已接通 typed loopback；GitHub 发布基线完成 | 已有内容读取/回填、系统 workspace picker、可重启恢复、桌面安装包、签名/SBOM |
 
 ## 18. MVP 发布门槛
 
@@ -993,20 +993,20 @@ redaction profile + consent scope + retention class
 Use personal-ai-project-design.
 
 Read AGENTS.md and docs/PROJECT_GUIDE.md in this repository.
-Add an explicit create-first-Skill mode to the Codex local web entry.
+Add read/backfill support for one existing Codex project Skill in the local web entry.
 
 Scope:
-- Add explicit `更新已有` and `新建 Skill` modes; never infer creation from a missing target.
-- Reuse the same Blueprint, deterministic renderer, real Diff, approval, receipt and guarded rollback flow.
-- Create only one `.agents/skills/<name>/SKILL.md`; enumerate every missing parent directory before approval and remove only tool-created empty directories during guarded rollback.
-- Reject an existing target in create mode and an absent target in update mode. Bind mode, target path, candidate and absent/existing preimage to the approval.
-- Empty inventory should lead directly to the create mode. Existing-Skill selection remains the only target source in update mode.
+- Add a content endpoint that reads only the explicitly selected bounded regular `SKILL.md` after inventory selection.
+- Parse and backfill the ordinary form only for `codex-project-skill-template-v1` canonical content.
+- For non-canonical content, preserve and show the full text in an explicit advanced whole-file replacement path; never pretend the form is lossless.
+- Keep create/update Diff, approval, apply and rollback behavior unchanged.
+- Add fixtures for canonical backfill, non-canonical fallback, malformed UTF-8, stale content and zero writes during read.
 - Keep LLM, supporting-file generation, multi-file changes, Claude, conversion and desktop packaging out of this slice.
 
 Run scripts/test-core.sh and scripts/run-conformance.sh.
 Before adding a dependency, explain why the JDK/Vue stack is insufficient.
 ```
 
-该切片完成后优先处理一键启动/安装包和系统文件夹选择器；不同时启动历史学习、遗传优化、通用转换或更多宿主。
+该切片完成后依次处理可重启恢复入口、系统文件夹选择器和 `jpackage` alpha；不同时启动历史学习、遗传优化、通用转换或更多宿主。
 
 详细来源和证据等级见 [RESEARCH_NOTES.md](RESEARCH_NOTES.md)。

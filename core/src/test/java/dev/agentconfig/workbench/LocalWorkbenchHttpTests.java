@@ -1,6 +1,10 @@
 package dev.agentconfig.workbench;
 
 import dev.agentconfig.workbench.localweb.LocalWorkbenchServer;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -10,8 +14,10 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.security.MessageDigest;
 import java.time.Duration;
 import java.util.Comparator;
+import java.util.HexFormat;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -32,6 +38,10 @@ public final class LocalWorkbenchHttpTests {
         run("inventory distinguishes empty and partial results", this::inventoryStates);
         run("inventory rejects invalid requests with typed errors", this::inventoryErrors);
         run("preview apply rollback is byte identical", this::endToEnd);
+        run("empty project can create and undo its first Skill", this::createFirstSkill);
+        run("create approval rejects target and parent topology changes", this::createGuards);
+        run("v1 update transaction remains rollback compatible", this::v1RollbackCompatibility);
+        run("create rollback preserves replaced parent directory", this::replacedParentGuard);
         run("stale approval preserves external edit", this::staleApproval);
         run("missing existing target is typed blocked", this::missingTarget);
         run("blocked workspace link never exposes authorized scope", this::blockedWorkspaceLink);
@@ -51,6 +61,7 @@ public final class LocalWorkbenchHttpTests {
             equal(200, response.statusCode(), "status");
             contains(response.body(), "\"status\": \"READY\"");
             contains(response.body(), "\"skillInventory\": true");
+            contains(response.body(), "\"skillCreate\": true");
             check(response.headers().firstValue("Access-Control-Allow-Origin").isEmpty(),
                     "CORS header present");
         });
@@ -251,6 +262,193 @@ public final class LocalWorkbenchHttpTests {
         });
     }
 
+    private void createFirstSkill() throws Exception {
+        withFixture(fixture -> {
+            Files.delete(fixture.target());
+            Files.delete(fixture.target().getParent());
+            Files.delete(fixture.workspace().resolve(".agents/skills"));
+            Files.delete(fixture.workspace().resolve(".agents"));
+
+            HttpResponse<String> preview = fixture.post("preview",
+                    previewBody(fixture.workspace(), true, "CREATE"));
+            equal(200, preview.statusCode(), "preview status");
+            contains(preview.body(), "\"operation\": \"CREATE\"");
+            contains(preview.body(), "\"status\": \"READY_CREATE\"");
+            contains(preview.body(), "--- /dev/null\\n");
+            check(!Files.exists(fixture.target(), LinkOption.NOFOLLOW_LINKS),
+                    "preview created target");
+            String token = capture(preview.body(),
+                    "\\\"approvalToken\\\": \\\"(acw_apply1_[0-9a-f]{64})\\\"");
+
+            HttpResponse<String> apply = fixture.post("apply", applyBody(
+                    fixture.workspace(), token, "CREATE"));
+            equal(200, apply.statusCode(), "apply status");
+            contains(apply.body(), "\"operation\": \"CREATE\"");
+            contains(apply.body(), "\"status\": \"VERIFIED_APPLIED\"");
+            check(Files.isRegularFile(fixture.target(), LinkOption.NOFOLLOW_LINKS),
+                    "target not created");
+            String transaction = capture(apply.body(),
+                    "\\\"transactionId\\\": \\\"([0-9a-f-]{36})\\\"");
+
+            HttpResponse<String> rollback = fixture.post("rollback",
+                    rollbackBody(fixture.workspace(), transaction));
+            equal(200, rollback.statusCode(), "rollback status");
+            contains(rollback.body(), "\"status\": \"ROLLED_BACK\"");
+            contains(rollback.body(), "CONTROLLED_CREATE_ROLLBACK_VERIFIED");
+            check(!Files.exists(fixture.target(), LinkOption.NOFOLLOW_LINKS),
+                    "create rollback kept target");
+            check(!Files.exists(fixture.workspace().resolve(".agents"),
+                    LinkOption.NOFOLLOW_LINKS), "create rollback kept owned directories");
+        });
+    }
+
+    private void createGuards() throws Exception {
+        withFixture(fixture -> {
+            HttpResponse<String> existing = fixture.post("preview",
+                    previewBody(fixture.workspace(), true, "CREATE"));
+            equal(422, existing.statusCode(), "existing create status");
+            contains(existing.body(), "CREATE_TARGET_ALREADY_EXISTS");
+
+            Files.delete(fixture.target());
+            String targetToken = capture(fixture.post("preview",
+                    previewBody(fixture.workspace(), true, "CREATE")).body(),
+                    "\\\"approvalToken\\\": \\\"(acw_apply1_[0-9a-f]{64})\\\"");
+            Files.writeString(fixture.target(), "external file\n", StandardCharsets.UTF_8);
+            HttpResponse<String> targetChanged = fixture.post("apply", applyBody(
+                    fixture.workspace(), targetToken, "CREATE"));
+            equal(409, targetChanged.statusCode(), "created target status");
+            contains(targetChanged.body(), "APPROVAL_MISMATCH");
+            equal("external file\n", Files.readString(fixture.target()), "external target");
+        });
+        withFixture(fixture -> {
+            Files.delete(fixture.target());
+            Files.delete(fixture.target().getParent());
+            Files.delete(fixture.workspace().resolve(".agents/skills"));
+            Files.delete(fixture.workspace().resolve(".agents"));
+            String token = capture(fixture.post("preview",
+                    previewBody(fixture.workspace(), true, "CREATE")).body(),
+                    "\\\"approvalToken\\\": \\\"(acw_apply1_[0-9a-f]{64})\\\"");
+            Files.createDirectory(fixture.workspace().resolve(".agents"));
+            HttpResponse<String> changedParents = fixture.post("apply", applyBody(
+                    fixture.workspace(), token, "CREATE"));
+            equal(409, changedParents.statusCode(), "parent topology status");
+            contains(changedParents.body(), "APPROVAL_MISMATCH");
+            check(!Files.exists(fixture.target(), LinkOption.NOFOLLOW_LINKS),
+                    "topology change created target");
+        });
+    }
+
+    private void v1RollbackCompatibility() throws Exception {
+        withFixture(fixture -> {
+            byte[] original = Files.readAllBytes(fixture.target());
+            String token = capture(fixture.post("preview",
+                    previewBody(fixture.workspace(), true)).body(),
+                    "\\\"approvalToken\\\": \\\"(acw_apply1_[0-9a-f]{64})\\\"");
+            HttpResponse<String> apply = fixture.post("apply",
+                    applyBody(fixture.workspace(), token));
+            String transaction = capture(apply.body(),
+                    "\\\"transactionId\\\": \\\"([0-9a-f-]{36})\\\"");
+            downgradeManifestToV1(fixture.state().resolve(transaction).resolve("manifest.bin"));
+            HttpResponse<String> rollback = fixture.post("rollback",
+                    rollbackBody(fixture.workspace(), transaction));
+            equal(200, rollback.statusCode(), "v1 rollback status");
+            contains(rollback.body(), "\"status\": \"ROLLED_BACK\"");
+            check(java.util.Arrays.equals(original, Files.readAllBytes(fixture.target())),
+                    "v1 rollback bytes");
+        });
+    }
+
+    private void replacedParentGuard() throws Exception {
+        withFixture(fixture -> {
+            Files.delete(fixture.target());
+            Files.delete(fixture.target().getParent());
+            Files.delete(fixture.workspace().resolve(".agents/skills"));
+            Files.delete(fixture.workspace().resolve(".agents"));
+            String token = capture(fixture.post("preview",
+                    previewBody(fixture.workspace(), true, "CREATE")).body(),
+                    "\\\"approvalToken\\\": \\\"(acw_apply1_[0-9a-f]{64})\\\"");
+            HttpResponse<String> apply = fixture.post("apply", applyBody(
+                    fixture.workspace(), token, "CREATE"));
+            String transaction = capture(apply.body(),
+                    "\\\"transactionId\\\": \\\"([0-9a-f-]{36})\\\"");
+
+            Path replacementParent = fixture.target().getParent();
+            Path parked = fixture.workspace().resolve("parked-skill.md");
+            Files.move(fixture.target(), parked);
+            Files.delete(replacementParent);
+            Files.createDirectory(replacementParent);
+            Files.move(parked, fixture.target());
+
+            HttpResponse<String> rollback = fixture.post("rollback",
+                    rollbackBody(fixture.workspace(), transaction));
+            equal(200, rollback.statusCode(), "rollback status");
+            contains(rollback.body(), "\"status\": \"ROLLED_BACK\"");
+            check(!Files.exists(fixture.target(), LinkOption.NOFOLLOW_LINKS),
+                    "rollback kept candidate");
+            check(Files.isDirectory(replacementParent, LinkOption.NOFOLLOW_LINKS),
+                    "rollback deleted replaced parent");
+        });
+    }
+
+    private static void downgradeManifestToV1(Path path) throws Exception {
+        String transactionId;
+        String rootIdentity;
+        String logicalPath;
+        String preimageSha256;
+        String preimageIdentity;
+        String permissions;
+        String candidateSha256;
+        String resultIdentity;
+        String state;
+        try (DataInputStream input = new DataInputStream(
+                new ByteArrayInputStream(Files.readAllBytes(path)))) {
+            equal("ACW-CONTROLLED-SKILL", input.readUTF(), "manifest magic");
+            equal(2, input.readInt(), "manifest version");
+            transactionId = input.readUTF();
+            rootIdentity = input.readUTF();
+            logicalPath = input.readUTF();
+            check(input.readBoolean(), "update transaction expected");
+            preimageSha256 = input.readUTF();
+            preimageIdentity = input.readUTF();
+            permissions = input.readUTF();
+            candidateSha256 = input.readUTF();
+            resultIdentity = input.readUTF();
+            equal(0, input.readInt(), "update created parent count");
+            state = input.readUTF();
+            input.readUTF();
+            equal(-1, input.read(), "manifest trailing bytes");
+        }
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        try (DataOutputStream output = new DataOutputStream(bytes)) {
+            output.writeUTF("ACW-CONTROLLED-SKILL");
+            output.writeInt(1);
+            output.writeUTF(transactionId);
+            output.writeUTF(rootIdentity);
+            output.writeUTF(logicalPath);
+            output.writeUTF(preimageSha256);
+            output.writeUTF(preimageIdentity);
+            output.writeUTF(permissions);
+            output.writeUTF(candidateSha256);
+            output.writeUTF(resultIdentity);
+            output.writeUTF(state);
+            output.writeUTF(hash(tuple("controlled-manifest:v1", transactionId, rootIdentity,
+                    logicalPath, preimageSha256, preimageIdentity, permissions,
+                    candidateSha256, resultIdentity, state)));
+        }
+        Files.write(path, bytes.toByteArray());
+    }
+
+    private static String tuple(String... values) {
+        StringBuilder result = new StringBuilder();
+        for (String value : values) result.append(value.length()).append(':').append(value).append(';');
+        return result.toString();
+    }
+
+    private static String hash(String value) throws Exception {
+        return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                .digest(value.getBytes(StandardCharsets.UTF_8)));
+    }
+
     private void missingTarget() throws Exception {
         withFixture(fixture -> {
             Files.delete(fixture.target());
@@ -318,6 +516,12 @@ public final class LocalWorkbenchHttpTests {
                 + ",\"guidedRequest\":" + json(request()) + ",\"includeDiff\":" + diff + "}";
     }
 
+    private static String previewBody(Path workspace, boolean diff, String operation) {
+        return "{\"hostId\":\"codex\",\"workspacePath\":" + json(workspace.toString())
+                + ",\"guidedRequest\":" + json(request()) + ",\"includeDiff\":" + diff
+                + ",\"operation\":" + json(operation) + "}";
+    }
+
     private static String inventoryBody(Path workspace) {
         return "{\"hostId\":\"codex\",\"workspacePath\":"
                 + json(workspace.toString()) + "}";
@@ -327,6 +531,12 @@ public final class LocalWorkbenchHttpTests {
         return "{\"hostId\":\"codex\",\"workspacePath\":" + json(workspace.toString())
                 + ",\"guidedRequest\":" + json(request()) + ",\"approvalToken\":"
                 + json(token) + "}";
+    }
+
+    private static String applyBody(Path workspace, String token, String operation) {
+        return "{\"hostId\":\"codex\",\"workspacePath\":" + json(workspace.toString())
+                + ",\"guidedRequest\":" + json(request()) + ",\"approvalToken\":"
+                + json(token) + ",\"operation\":" + json(operation) + "}";
     }
 
     private static String rollbackBody(Path workspace, String transaction) {

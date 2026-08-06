@@ -181,7 +181,8 @@ public final class LocalWorkbenchServer implements AutoCloseable {
         send(exchange, 200, "{\n  \"schemaVersion\": 1,\n  \"status\": \"READY\",\n"
                 + "  \"productVersion\": \"0.1.0-lab\",\n"
                 + "  \"capabilities\": [{\"hostId\": \"codex\","
-                + " \"skillInventory\": true, \"existingSkillReplace\": true}]\n}");
+                + " \"skillInventory\": true, \"skillCreate\": true,"
+                + " \"existingSkillReplace\": true}]\n}");
     }
 
     private void staticOrNotFound(HttpExchange exchange) throws IOException {

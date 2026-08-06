@@ -1,8 +1,9 @@
 package dev.agentconfig.workbench.transaction;
 
 import java.util.Optional;
+import java.util.List;
 
-/** Metadata-only plan for the transitional real-workspace existing-Skill editor. */
+/** Metadata-only plan for the transitional real-workspace single-Skill editor. */
 public record ControlledSkillChangePlan(
         int schemaVersion,
         String id,
@@ -16,6 +17,7 @@ public record ControlledSkillChangePlan(
         Optional<String> diffSha256,
         Optional<String> approvalToken,
         Optional<String> blockedReason,
+        List<String> missingParentDirectories,
         boolean contentIncluded,
         boolean writesPerformed,
         boolean applyEligible) {
@@ -35,8 +37,9 @@ public record ControlledSkillChangePlan(
         diffSha256 = requiredOptional(diffSha256, "diffSha256", true);
         approvalToken = requiredOptional(approvalToken, "approvalToken", false);
         blockedReason = requiredOptional(blockedReason, "blockedReason", false);
+        missingParentDirectories = List.copyOf(missingParentDirectories);
         if (contentIncluded || writesPerformed) throw new IllegalArgumentException("capability flags");
-        boolean ready = status == Status.READY_REPLACE;
+        boolean ready = status == Status.READY_CREATE || status == Status.READY_REPLACE;
         if (applyEligible != ready || ready != approvalToken.isPresent()
                 || ready != diffSha256.isPresent()) throw new IllegalArgumentException("approval");
         boolean targetKnown = status == Status.READY_REPLACE || status == Status.NO_CHANGE;
@@ -46,9 +49,15 @@ public record ControlledSkillChangePlan(
         if ((status == Status.BLOCKED) != blockedReason.isPresent()) {
             throw new IllegalArgumentException("blockedReason");
         }
+        if ((status != Status.READY_CREATE && !missingParentDirectories.isEmpty())
+                || missingParentDirectories.size() > 3
+                || missingParentDirectories.stream().anyMatch(path -> !path.matches(
+                        "\\.agents(?:/skills(?:/[a-z0-9]+(?:-[a-z0-9]+)*)?)?"))) {
+            throw new IllegalArgumentException("missingParentDirectories");
+        }
     }
 
-    public enum Status { READY_REPLACE, NO_CHANGE, BLOCKED }
+    public enum Status { READY_CREATE, READY_REPLACE, NO_CHANGE, BLOCKED }
 
     private static Optional<String> requiredOptional(
             Optional<String> value, String field, boolean hash) {
