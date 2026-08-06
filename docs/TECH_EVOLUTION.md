@@ -382,3 +382,10 @@
 - Vue 默认入口改为“基本信息、使用范围、执行与检查”三组普通表单；提供完整示例、即时缺项提示、3+3 去重/交叉检查以及长度、条目、行数和 UTF-8 总预算检查。Skill 目标逻辑路径随合法名称显示。
 - 新增纯 TypeScript 确定性 serializer，固定生成 Skill/project 分类、permission NONE 与 risk LOW，再复用原有 Java API。高级配置模式继续接受原始 `key: value`，没有增加 LLM、依赖或新的 Java contract。
 - Vue build/typecheck、真实 existing-Skill 预览和 360px 视觉检查通过。Gate 7 仍是单页实验入口；下一刀是只读 Skill inventory endpoint + 页面目标选择器。
+
+## 2026-08-06：把已有 Skill 发现与目标选择接入网页
+
+- loopback 新增 `POST /api/v1/skills/inventory`，复用 Codex Skill inventory v2，但只向页面投影选择目标所需的 HTTP envelope v1 元数据。完整、空、部分和错误结果分开表达；正文、hash、declared name、reference、物理路径和外部目标都不进入响应。
+- 页面在项目路径后显式读取 Skill，以原生选择器显示稳定排序结果；选择后锁定普通表单名称并显示逻辑路径。高级配置名称不一致会直接阻止预览，workspace 变化会清空旧列表和选择，迟到响应不会覆盖新项目。
+- `availableForPreview` 不等于可应用：INVALID 可以选择以尝试修复，PARTIAL 不可选择，真实 preview 继续决定编码、换行和替换资格。新增 3 项 HTTP fixture 后本地 Java 测试为 274 项。
+- Vue build/typecheck、两个 Skill 的读取/选择/目标预览、高级模式不一致阻断和 360px 布局通过。Gate 7 的“已有目标发现”完成，下一产品缺口是空项目创建第一个 Skill。

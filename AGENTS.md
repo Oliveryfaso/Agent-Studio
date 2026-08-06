@@ -2,7 +2,7 @@
 
 ## Project status
 
-- This project is a lab prototype whose active delivery path is Codex-first: `Inspect -> Draft -> Diff/Export -> Simple Apply/Rollback`. Codex `inspect`, Skill S0-S2, an existing-Skill controlled CLI, and a same-origin Vue/loopback single-page workflow now exist. Gate 6 remains partial and Gate 7 has a lab UI entry; power-loss durability, OS-level CAS/TOCTOU, Windows reparse coverage, ordinary-user workspace selection, and packaging remain explicit blockers.
+- This project is a lab prototype whose active delivery path is Codex-first: `Inspect -> Draft -> Diff/Export -> Simple Apply/Rollback`. Codex `inspect`, Skill S0-S2, an existing-Skill controlled CLI, and a same-origin Vue/loopback single-page workflow now exist. The UI can inventory and select an existing project Skill before preview. Gate 6 remains partial and Gate 7 has a lab UI entry; creating a first Skill, power-loss durability, OS-level CAS/TOCTOU, Windows reparse coverage, ordinary-user workspace picking, and packaging remain explicit blockers.
 - Read `docs/PROJECT_GUIDE.md` before changing product behavior or architecture.
 - Do not scaffold frameworks or add dependencies unless the current task explicitly asks for them.
 

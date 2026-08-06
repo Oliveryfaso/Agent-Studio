@@ -1,6 +1,8 @@
 package dev.agentconfig.workbench.localweb;
 
 import dev.agentconfig.workbench.blueprint.BlueprintPreviewService;
+import dev.agentconfig.workbench.skill.CodexSkillInventory;
+import dev.agentconfig.workbench.skill.CodexSkillInventoryService;
 import dev.agentconfig.workbench.skilldraft.CodexSkillDraftPreview;
 import dev.agentconfig.workbench.skilldraft.CodexSkillDraftService;
 import dev.agentconfig.workbench.transaction.ControlledExistingSkillService;
@@ -11,18 +13,71 @@ import dev.agentconfig.workbench.transaction.PreparedControlledSkillChange;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
-/** Typed HTTP projection over the deterministic existing-Skill workflow. */
+/** Typed HTTP projection over Codex Skill inventory and the existing-Skill workflow. */
 final class SkillChangeHttpApi {
     private final Path stateRoot;
 
     SkillChangeHttpApi(Path stateRoot) {
         this.stateRoot = stateRoot;
+    }
+
+    ApiResponse inventory(Map<String, Object> request, String requestId) {
+        try {
+            allowKeys(request, Set.of("hostId", "workspacePath"));
+            requireHost(request);
+            Path workspace = path(request, "workspacePath");
+            if (!Files.isDirectory(workspace, LinkOption.NOFOLLOW_LINKS)) {
+                throw new IllegalArgumentException("workspacePath");
+            }
+            CodexSkillInventory inventory = new CodexSkillInventoryService().inspect(workspace);
+            long warnings = inventory.findings().stream()
+                    .filter(finding -> finding.severity() == CodexSkillInventory.Severity.WARNING)
+                    .count();
+            long errors = inventory.findings().stream()
+                    .filter(finding -> finding.severity() == CodexSkillInventory.Severity.ERROR)
+                    .count();
+            long blocking = inventory.findings().stream()
+                    .filter(finding -> finding.severity() == CodexSkillInventory.Severity.BLOCKING)
+                    .count();
+            StringBuilder result = begin(requestId, "skill-inventory")
+                    .append("  \"hostId\": \"codex\",\n")
+                    .append("  \"status\": ").append(json(inventory.status().name())).append(",\n")
+                    .append("  \"contentIncluded\": false,\n")
+                    .append("  \"writesPerformed\": false,\n")
+                    .append("  \"skills\": [\n");
+            for (int index = 0; index < inventory.packages().size(); index++) {
+                CodexSkillInventory.SkillPackage skill = inventory.packages().get(index);
+                result.append("    {\"name\": ").append(json(skill.directoryName()))
+                        .append(", \"logicalPath\": ").append(json(skill.logicalPath()))
+                        .append(", \"state\": ").append(json(skill.state().name()))
+                        .append(", \"availableForPreview\": ")
+                        .append(skill.state() != CodexSkillInventory.PackageState.PARTIAL)
+                        .append(", \"supportingFileCount\": ")
+                        .append(skill.supportingFileCount()).append(", \"risks\": [");
+                var risks = skill.risks().stream().sorted().toList();
+                for (int riskIndex = 0; riskIndex < risks.size(); riskIndex++) {
+                    if (riskIndex > 0) result.append(", ");
+                    result.append(json(risks.get(riskIndex).name()));
+                }
+                result.append("]}").append(index + 1 < inventory.packages().size() ? ",\n" : "\n");
+            }
+            result.append("  ],\n  \"findingCounts\": {\"warning\": ").append(warnings)
+                    .append(", \"error\": ").append(errors)
+                    .append(", \"blocking\": ").append(blocking).append("}\n}");
+            return new ApiResponse(200, result.toString());
+        } catch (IllegalArgumentException exception) {
+            return error(400, requestId, "INPUT_INVALID", false);
+        } catch (IOException exception) {
+            return error(500, requestId, "CORE_IO_FAILED", true);
+        }
     }
 
     ApiResponse preview(Map<String, Object> request, String requestId) {

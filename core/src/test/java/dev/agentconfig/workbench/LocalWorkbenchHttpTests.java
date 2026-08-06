@@ -27,7 +27,10 @@ public final class LocalWorkbenchHttpTests {
     private void runAll() throws Exception {
         run("runtime binds loopback without CORS", this::runtime);
         run("built UI is same-origin with fragment token", this::staticUi);
-        run("mutations require exact origin and bearer token", this::authBoundary);
+        run("local API requires exact origin and bearer token", this::authBoundary);
+        run("inventory lists previewable Skills without content", this::inventory);
+        run("inventory distinguishes empty and partial results", this::inventoryStates);
+        run("inventory rejects invalid requests with typed errors", this::inventoryErrors);
         run("preview apply rollback is byte identical", this::endToEnd);
         run("stale approval preserves external edit", this::staleApproval);
         run("missing existing target is typed blocked", this::missingTarget);
@@ -47,6 +50,7 @@ public final class LocalWorkbenchHttpTests {
                     HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
             equal(200, response.statusCode(), "status");
             contains(response.body(), "\"status\": \"READY\"");
+            contains(response.body(), "\"skillInventory\": true");
             check(response.headers().firstValue("Access-Control-Allow-Origin").isEmpty(),
                     "CORS header present");
         });
@@ -70,6 +74,99 @@ public final class LocalWorkbenchHttpTests {
             HttpResponse<String> method = client.send(options,
                     HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
             equal(405, method.statusCode(), "options");
+
+            HttpResponse<String> inventory = fixture.postInventory(
+                    inventoryBody(fixture.workspace()), null, fixture.origin());
+            equal(401, inventory.statusCode(), "inventory missing token");
+        });
+    }
+
+    private void inventory() throws Exception {
+        withFixture(fixture -> {
+            String marker = "PRIVATE_SKILL_BODY_MARKER";
+            Files.writeString(fixture.target(), "---\nname: review-api-change\n"
+                    + "description: Review API changes.\n---\n\n" + marker + "\n",
+                    StandardCharsets.UTF_8);
+            Path alpha = Files.createDirectories(
+                    fixture.workspace().resolve(".agents/skills/alpha-check")).resolve("SKILL.md");
+            Files.writeString(alpha, "---\nname: alpha-check\n"
+                    + "description: Check alpha changes.\n---\n", StandardCharsets.UTF_8);
+            HttpResponse<String> response = fixture.postInventory(
+                    inventoryBody(fixture.workspace()));
+            equal(200, response.statusCode(), "status");
+            contains(response.body(), "\"command\": \"skill-inventory\"");
+            contains(response.body(), "\"status\": \"COMPLETE\"");
+            contains(response.body(), "\"name\": \"review-api-change\"");
+            contains(response.body(), "\"logicalPath\": "
+                    + "\".agents/skills/review-api-change/SKILL.md\"");
+            contains(response.body(), "\"state\": \"MINIMAL_METADATA_VALID\"");
+            contains(response.body(), "\"availableForPreview\": true");
+            contains(response.body(), "\"contentIncluded\": false");
+            contains(response.body(), "\"writesPerformed\": false");
+            check(response.body().indexOf("\"name\": \"alpha-check\"")
+                    < response.body().indexOf("\"name\": \"review-api-change\""),
+                    "Skill ordering");
+            check(!response.body().contains(marker), "inventory exposed Skill content");
+            check(!response.body().contains("sha256"), "inventory exposed hash");
+        });
+    }
+
+    private void inventoryStates() throws Exception {
+        withFixture(fixture -> {
+            Files.delete(fixture.target());
+            Files.delete(fixture.target().getParent());
+            Files.delete(fixture.workspace().resolve(".agents/skills"));
+            Files.delete(fixture.workspace().resolve(".agents"));
+            HttpResponse<String> empty = fixture.postInventory(
+                    inventoryBody(fixture.workspace()));
+            equal(200, empty.statusCode(), "empty status");
+            contains(empty.body(), "\"status\": \"COMPLETE\"");
+            contains(empty.body(), "\"skills\": [\n  ]");
+
+            Path skillDirectory = Files.createDirectories(
+                    fixture.workspace().resolve(".agents/skills/partial-skill"));
+            Files.writeString(skillDirectory.resolve("SKILL.md"),
+                    "---\nname: partial-skill\ndescription: Partial fixture.\n---\n",
+                    StandardCharsets.UTF_8);
+            Path outside = Files.writeString(
+                    fixture.workspace().getParent().resolve("outside.txt"), "outside\n");
+            try {
+                Files.createSymbolicLink(skillDirectory.resolve("support.txt"), outside);
+            } catch (IOException | UnsupportedOperationException | SecurityException exception) {
+                return;
+            }
+            HttpResponse<String> partial = fixture.postInventory(
+                    inventoryBody(fixture.workspace()));
+            equal(200, partial.statusCode(), "partial status");
+            contains(partial.body(), "\"status\": \"PARTIAL\"");
+            contains(partial.body(), "\"state\": \"PARTIAL\"");
+            contains(partial.body(), "\"availableForPreview\": false");
+            contains(partial.body(), "\"blocking\": 1");
+            check(!partial.body().contains(outside.toString()), "outside path exposed");
+        });
+    }
+
+    private void inventoryErrors() throws Exception {
+        withFixture(fixture -> {
+            HttpResponse<String> invalidPackage = fixture.postInventory(
+                    inventoryBody(fixture.workspace()));
+            contains(invalidPackage.body(), "\"state\": \"INVALID\"");
+            contains(invalidPackage.body(), "\"availableForPreview\": true");
+
+            String wrongHost = "{\"hostId\":\"claude-code\",\"workspacePath\":"
+                    + json(fixture.workspace().toString()) + "}";
+            HttpResponse<String> wrongHostResponse = fixture.postInventory(wrongHost);
+            equal(400, wrongHostResponse.statusCode(), "wrong host");
+            contains(wrongHostResponse.body(), "INPUT_INVALID");
+
+            String unknown = inventoryBody(fixture.workspace());
+            unknown = unknown.substring(0, unknown.length() - 1) + ",\"typo\":true}";
+            equal(400, fixture.postInventory(unknown).statusCode(), "unknown field");
+            equal(400, fixture.postInventory("{\"hostId\":\"codex\"}")
+                    .statusCode(), "missing workspace");
+            Path missing = fixture.workspace().resolve("missing");
+            equal(400, fixture.postInventory(inventoryBody(missing))
+                    .statusCode(), "missing path");
         });
     }
 
@@ -221,6 +318,11 @@ public final class LocalWorkbenchHttpTests {
                 + ",\"guidedRequest\":" + json(request()) + ",\"includeDiff\":" + diff + "}";
     }
 
+    private static String inventoryBody(Path workspace) {
+        return "{\"hostId\":\"codex\",\"workspacePath\":"
+                + json(workspace.toString()) + "}";
+    }
+
     private static String applyBody(Path workspace, String token) {
         return "{\"hostId\":\"codex\",\"workspacePath\":" + json(workspace.toString())
                 + ",\"guidedRequest\":" + json(request()) + ",\"approvalToken\":"
@@ -269,6 +371,23 @@ public final class LocalWorkbenchHttpTests {
         String origin() {
             String value = server.baseUri().toString();
             return value.substring(0, value.length() - 1);
+        }
+        URI inventoryEndpoint() {
+            return server.baseUri().resolve("api/v1/skills/inventory");
+        }
+        HttpResponse<String> postInventory(String body) throws Exception {
+            return postInventory(body, server.sessionToken(), origin());
+        }
+        HttpResponse<String> postInventory(String body, String token,
+                String suppliedOrigin) throws Exception {
+            HttpRequest.Builder builder = HttpRequest.newBuilder(inventoryEndpoint())
+                    .timeout(Duration.ofSeconds(5))
+                    .header("Content-Type", "application/json")
+                    .header("Origin", suppliedOrigin);
+            if (token != null) builder.header("Authorization", "Bearer " + token);
+            return HttpClient.newHttpClient().send(builder.POST(
+                    HttpRequest.BodyPublishers.ofString(body)).build(),
+                    HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
         }
         HttpResponse<String> post(String action, String body) throws Exception {
             return post(action, body, server.sessionToken(), origin());

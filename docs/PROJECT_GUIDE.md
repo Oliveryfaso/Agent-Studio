@@ -897,13 +897,13 @@ redaction profile + consent scope + retention class
 ### Phase 6.5：本地 UI 单页闭环（实验入口完成）
 
 - Java 21 `HttpServer` 只绑定 `127.0.0.1` 随机端口；state root 是进程启动参数，不由单次浏览器请求选择。
-- `/api/v1/runtime` 与 `skill-changes/preview|apply|rollback` 返回 typed schema v1；HTTP controller 直接调用 Blueprint、Draft 与 Controlled service，不启动子进程、不解析 CLI stdout。
+- `/api/v1/runtime`、`skills/inventory` 与 `skill-changes/preview|apply|rollback` 返回 typed HTTP schema v1；HTTP controller 直接调用既有 Inventory、Blueprint、Draft 与 Controlled service，不启动子进程、不解析 CLI stdout。Inventory core 仍保留自己的 schema v2，不与 HTTP envelope 混称。
 - mutation endpoint 同时校验精确 Host、同源 Origin 和 256-bit 进程期 bearer token，不发送宽泛 CORS。48 KiB body budget、严格 UTF-8/flat JSON 与稳定 error envelope 已进入 fixture。
-- Vue 3 + TypeScript 单页现已完成 workspace/普通 Skill 表单、真实 Diff、确认、apply receipt 与 rollback；表单确定性生成 guided request，并提供完整示例、即时检查与高级原始配置入口。输入变化会废弃旧 preview/approval，并明确显示 blocked/no-change/stale/current-target-changed/recovery/network 状态。
-- 界面采用本地桌面工作台布局：桌面端左侧填写项目与 Skill 内容，右侧查看状态、文件差异和应用记录；窄屏退回单列。普通界面使用中文产品状态，后端状态码和结果码只放在折叠的“技术详情”中。下一项产品入口工作是显示并选择项目中已有的 Skill，而不是继续扩展表单协议。
+- Vue 3 + TypeScript 单页现已完成 workspace/已有 Skill 读取与选择/普通 Skill 表单、真实 Diff、确认、apply receipt 与 rollback；表单确定性生成 guided request，并提供完整示例、即时检查与高级原始配置入口。选择的目录名必须与最终 request name 一致，输入变化会废弃旧 preview/approval，并明确显示 empty/partial/error/blocked/no-change/stale/current-target-changed/recovery/network 状态。
+- 界面采用本地桌面工作台布局：桌面端左侧读取并选择已有 Skill、填写内容，右侧查看状态、文件差异和应用记录；窄屏退回单列。普通界面使用中文产品状态，后端状态码和结果码只放在折叠的“技术详情”中。下一项产品入口工作是让空项目创建第一个 Skill。
 - Java 进程同源托管 `ui/dist` 的窄白名单静态资源。启动链接只在 fragment 中携带 token；Vue 读取后立即清除 fragment，并只把 token 保存在页面内存。
 - `scripts/build-ui.sh` 使用 lockfile 安装并构建；`scripts/run-local-web.sh <trusted-state-root>` 编译 Java 并启动页面。Vue/Vite/TypeScript/vue-tsc 是仅限 `ui/` 的必要构建依赖，不进入安全关键 Java 核心。
-- 当前仍没有项目内 Skill 选择器、文件选择器、history database、Recovery Center、桌面壳或安装包；关闭/刷新页面后必须使用当前进程打印的新启动链接重新进入。
+- 当前仍不能创建第一个 Skill，也没有系统文件夹选择器、history database、Recovery Center、桌面壳或安装包；关闭/刷新页面后必须使用当前进程打印的新启动链接重新进入。
 
 ### Phase 7：Wave 2 preview、可选 AI 和 Prompt Export
 
@@ -938,7 +938,7 @@ redaction profile + consent scope + retention class
 | Gate 4 | 双向转换预览 | canonical Codex root wrapper 纵向切片已验证；能力冻结 | 只有核心闭环验证后才复审通用/反向 renderer |
 | Gate 5 | ChangeSet、快照、事务与恢复 | fixture apply/rollback 进程恢复 + 显式 pending discovery 完成 | 断电持久性、OS 级 CAS/dir-handle-relative 防 TOCTOU、Windows reparse/junction、长期 vault；尚无自动启动恢复 |
 | Gate 6 | 真实工作区 Apply | 部分开放：existing Codex Skill 单文件 CLI + Vue 审阅/批准/回退 | 自动恢复、创建/多文件、跨进程 CAS、Windows reparse 与分发加固 |
-| Gate 7 | UI、Wave 1、GitHub/分发 | 单页实验入口可用：普通 Skill 表单、完整示例与即时检查已接通 typed loopback、真实 Diff/apply/rollback；GitHub 发布基线完成 | 项目内 Skill 发现/选择、workspace picker、其他宿主语义、PR 导出、桌面安装包、签名/SBOM |
+| Gate 7 | UI、Wave 1、GitHub/分发 | 单页实验入口可用：已有 Skill 发现/选择、普通表单、真实 Diff/apply/rollback 已接通 typed loopback；GitHub 发布基线完成 | 创建第一个 Skill、系统 workspace picker、其他宿主语义、PR 导出、桌面安装包、签名/SBOM |
 
 ## 18. MVP 发布门槛
 
@@ -993,20 +993,20 @@ redaction profile + consent scope + retention class
 Use personal-ai-project-design.
 
 Read AGENTS.md and docs/PROJECT_GUIDE.md in this repository.
-Connect the existing Codex Skill inventory to the local web entry.
+Add an explicit create-first-Skill mode to the Codex local web entry.
 
 Scope:
-- Add a narrow read-only HTTP endpoint over the existing Codex Skill inventory service.
-- After the user enters a workspace, show existing project Skills with name, logical path and actionable inventory status.
-- Selecting a Skill should fill the structured form name and make the target explicit; manual name entry remains available.
-- Distinguish empty workspace, loading, unreadable/partial inventory and network failure in ordinary Chinese.
-- Keep inventory content-free and perform zero workspace writes; do not add creation, multi-file editing, LLM, Claude, conversion or desktop packaging in this slice.
-- Preserve the guided-request, preview, apply and rollback HTTP contracts.
+- Add explicit `更新已有` and `新建 Skill` modes; never infer creation from a missing target.
+- Reuse the same Blueprint, deterministic renderer, real Diff, approval, receipt and guarded rollback flow.
+- Create only one `.agents/skills/<name>/SKILL.md`; enumerate every missing parent directory before approval and remove only tool-created empty directories during guarded rollback.
+- Reject an existing target in create mode and an absent target in update mode. Bind mode, target path, candidate and absent/existing preimage to the approval.
+- Empty inventory should lead directly to the create mode. Existing-Skill selection remains the only target source in update mode.
+- Keep LLM, supporting-file generation, multi-file changes, Claude, conversion and desktop packaging out of this slice.
 
 Run scripts/test-core.sh and scripts/run-conformance.sh.
 Before adding a dependency, explain why the JDK/Vue stack is insufficient.
 ```
 
-该切片完成后评估“创建第一个 Skill”和一键启动/安装包；不同时启动历史学习、遗传优化、通用转换或更多宿主。
+该切片完成后优先处理一键启动/安装包和系统文件夹选择器；不同时启动历史学习、遗传优化、通用转换或更多宿主。
 
 详细来源和证据等级见 [RESEARCH_NOTES.md](RESEARCH_NOTES.md)。

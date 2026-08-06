@@ -14,6 +14,21 @@ interface ApiErrorBody {
   requestId?: string
 }
 
+interface SkillInventoryResponse extends ApiErrorBody {
+  status: 'COMPLETE' | 'PARTIAL'
+  contentIncluded: false
+  writesPerformed: false
+  skills: Array<{
+    name: string
+    logicalPath: string
+    state: 'MINIMAL_METADATA_VALID' | 'INVALID' | 'PARTIAL'
+    availableForPreview: boolean
+    supportingFileCount: number
+    risks: string[]
+  }>
+  findingCounts: { warning: number; error: number; blocking: number }
+}
+
 interface PreviewResponse extends ApiErrorBody {
   authorizedRoot: string | null
   targetPath: string | null
@@ -59,12 +74,33 @@ interface RollbackAnchor {
 
 const sessionToken = ref(readAndForgetToken())
 const workspacePath = ref('')
+const inventoryPhase = ref<'idle' | 'loading' | 'ready' | 'error'>('idle')
+const skillInventory = ref<SkillInventoryResponse | null>(null)
+const inventoryWorkspace = ref('')
+const inventoryError = ref('')
+const selectedInventoryName = ref('')
+let inventorySequence = 0
 const inputMode = ref<'form' | 'advanced'>('form')
 const skillForm = reactive(emptySkillForm())
 const advancedRequest = ref('')
 const formIssues = computed(() => validateSkillForm(skillForm))
 const generatedRequest = computed(() => serializeSkillForm(skillForm))
 const guidedRequest = computed(() => inputMode.value === 'form' ? generatedRequest.value : advancedRequest.value)
+const advancedSkillName = computed(() => {
+  const names = advancedRequest.value.split(/\r?\n/)
+    .map(line => line.match(/^\s*name\s*:\s*(.+?)\s*$/i)?.[1] ?? '')
+    .filter(Boolean)
+  return names.length === 1 ? names[0] : ''
+})
+const selectedInventorySkill = computed(() => skillInventory.value?.skills
+  .find(skill => skill.name === selectedInventoryName.value) ?? null)
+const inventorySelectionIssue = computed(() => {
+  if (inventoryPhase.value !== 'ready') return ''
+  if (!selectedInventorySkill.value) return '请从项目列表中选择要更新的 Skill。'
+  const requestName = inputMode.value === 'form' ? skillForm.name.trim() : advancedSkillName.value
+  return requestName === selectedInventorySkill.value.name
+    ? '' : '配置中的文件名称与所选 Skill 不一致。'
+})
 const targetSkillLogicalPath = computed(() => /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(skillForm.name.trim())
   ? `.agents/skills/${skillForm.name.trim()}/SKILL.md`
   : '')
@@ -80,12 +116,17 @@ const message = ref('请选择项目，并填写要更新的 Skill。')
 const messageTone = ref<'neutral' | 'success' | 'warning' | 'danger'>('neutral')
 
 const busy = computed(() => phase.value !== 'idle')
+const canLoadInventory = computed(() => Boolean(
+  sessionToken.value && workspacePath.value.trim() && inventoryPhase.value !== 'loading',
+))
 const currentSignature = computed(() => `${workspacePath.value}\u0000${guidedRequest.value}`)
 const canPreview = computed(() => Boolean(
   sessionToken.value
   && workspacePath.value.trim()
   && guidedRequest.value.trim()
+  && inventoryPhase.value !== 'loading'
   && (inputMode.value === 'advanced' || formIssues.value.length === 0)
+  && !inventorySelectionIssue.value
   && !busy.value,
 ))
 const hasActiveRollback = computed(() => Boolean(
@@ -118,6 +159,16 @@ watch([workspacePath, guidedRequest], () => {
     confirmed.value = false
     setMessage('内容已修改，请重新生成预览。', 'warning')
   }
+  if (inventoryPhase.value !== 'idle'
+      && inventoryWorkspace.value !== workspacePath.value.trim()) {
+    if (skillForm.name === selectedInventoryName.value) skillForm.name = ''
+    inventorySequence++
+    inventoryPhase.value = 'idle'
+    skillInventory.value = null
+    inventoryWorkspace.value = ''
+    inventoryError.value = ''
+    selectedInventoryName.value = ''
+  }
 })
 
 function readAndForgetToken(): string {
@@ -140,8 +191,81 @@ function selectInputMode(mode: 'form' | 'advanced'): void {
 }
 
 function fillExample(): void {
+  const selectedName = selectedInventoryName.value
   Object.assign(skillForm, exampleSkillForm())
+  if (selectedName) skillForm.name = selectedName
   setMessage('示例已填入，可以直接预览，也可以按项目情况修改。', 'neutral')
+}
+
+async function loadSkillInventory(): Promise<void> {
+  const workspace = workspacePath.value.trim()
+  if (!sessionToken.value) {
+    inventoryPhase.value = 'error'
+    inventoryError.value = '页面未连接到本地服务，请重新打开启动链接。'
+    return
+  }
+  if (!workspace) {
+    inventoryPhase.value = 'error'
+    inventoryError.value = '请先填写项目文件夹。'
+    return
+  }
+  const requestSequence = ++inventorySequence
+  inventoryPhase.value = 'loading'
+  inventoryError.value = ''
+  skillInventory.value = null
+  try {
+    const result = await post<SkillInventoryResponse>('skills/inventory', {
+      hostId: 'codex',
+      workspacePath: workspace,
+    })
+    if (requestSequence !== inventorySequence || workspace !== workspacePath.value.trim()) return
+    skillInventory.value = result
+    const retained = result.skills.find(skill =>
+      skill.name === selectedInventoryName.value && skill.availableForPreview)
+    if (!retained) {
+      if (skillForm.name === selectedInventoryName.value) skillForm.name = ''
+      selectedInventoryName.value = ''
+    }
+    inventoryWorkspace.value = workspace
+    inventoryPhase.value = 'ready'
+  } catch (error) {
+    if (requestSequence !== inventorySequence || workspace !== workspacePath.value.trim()) return
+    inventoryWorkspace.value = workspace
+    inventoryError.value = inventoryErrorMessage(error)
+    inventoryPhase.value = 'error'
+  }
+}
+
+function selectInventorySkill(skill: SkillInventoryResponse['skills'][number]): void {
+  if (!skill.availableForPreview) return
+  selectedInventoryName.value = skill.name
+  skillForm.name = skill.name
+  selectInputMode('form')
+  setMessage(`已选择 ${skill.name}，请填写或检查其余内容。`, 'neutral')
+}
+
+function handleInventorySelection(event: Event): void {
+  const name = (event.target as HTMLSelectElement).value
+  const skill = skillInventory.value?.skills.find(candidate => candidate.name === name)
+  if (skill) selectInventorySkill(skill)
+  else {
+    if (skillForm.name === selectedInventoryName.value) skillForm.name = ''
+    selectedInventoryName.value = ''
+  }
+}
+
+function inventoryStateLabel(state: SkillInventoryResponse['skills'][number]['state']): string {
+  if (state === 'MINIMAL_METADATA_VALID') return '已识别'
+  if (state === 'INVALID') return '预览时检查'
+  return '信息不完整'
+}
+
+function inventoryErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    if (error.message === 'INPUT_INVALID') return '项目路径无效，请检查后重试。'
+    if (error.message === 'CORE_IO_FAILED') return '无法完整读取这个项目，请稍后重试。'
+  }
+  return '无法连接本地服务，请确认服务仍在运行。'
 }
 
 function validateInputs(): boolean {
@@ -161,11 +285,15 @@ function validateInputs(): boolean {
     setMessage(formIssues.value[0], 'danger')
     return false
   }
+  if (inventorySelectionIssue.value) {
+    setMessage(inventorySelectionIssue.value, 'danger')
+    return false
+  }
   return true
 }
 
-async function post<T>(action: 'preview' | 'apply' | 'rollback', body: Record<string, unknown>): Promise<T> {
-  const response = await fetch(`/api/v1/skill-changes/${action}`, {
+async function post<T>(endpoint: string, body: Record<string, unknown>): Promise<T> {
+  const response = await fetch(`/api/v1/${endpoint}`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${sessionToken.value}`,
@@ -186,7 +314,7 @@ async function requestPreview(): Promise<void> {
   previewSignature.value = ''
   setMessage('正在读取文件并生成预览…', 'neutral')
   try {
-    const result = await post<PreviewResponse>('preview', {
+    const result = await post<PreviewResponse>('skill-changes/preview', {
       hostId: 'codex',
       workspacePath: workspacePath.value.trim(),
       guidedRequest: guidedRequest.value,
@@ -220,7 +348,7 @@ async function applyChange(): Promise<void> {
   const approvedWorkspacePath = workspacePath.value.trim()
   const approvedTargetPath = preview.value.targetPath ?? preview.value.plan.logicalPath
   try {
-    const result = await post<ApplyResponse>('apply', {
+    const result = await post<ApplyResponse>('skill-changes/apply', {
       hostId: 'codex',
       workspacePath: workspacePath.value.trim(),
       guidedRequest: guidedRequest.value,
@@ -256,7 +384,7 @@ async function rollbackChange(): Promise<void> {
   phase.value = 'rolling-back'
   setMessage('正在检查并恢复原文件…', 'neutral')
   try {
-    const result = await post<RollbackResponse>('rollback', {
+    const result = await post<RollbackResponse>('skill-changes/rollback', {
       hostId: 'codex',
       workspacePath: rollbackAnchor.value.workspacePath,
       transactionId: rollbackAnchor.value.transactionId,
@@ -377,11 +505,50 @@ function errorMessage(error: unknown): string {
         </div>
 
         <div class="field-grid">
-          <label class="field">
-            <span>项目文件夹</span>
-            <input v-model="workspacePath" type="text" maxlength="4096" autocomplete="off" spellcheck="false" placeholder="/Users/you/code/my-project" :disabled="busy" />
+          <div class="field">
+            <label for="workspace-path">项目文件夹</label>
+            <div class="workspace-input-row">
+              <input id="workspace-path" v-model="workspacePath" type="text" maxlength="4096" autocomplete="off" spellcheck="false" placeholder="/Users/you/code/my-project" :disabled="busy" @keydown.enter.prevent="loadSkillInventory" />
+              <button class="secondary compact-button" type="button" :disabled="!canLoadInventory || busy" @click="loadSkillInventory">
+                <span v-if="inventoryPhase === 'loading'" class="spinner" aria-hidden="true" />
+                {{ inventoryPhase === 'loading' ? '正在读取…' : inventoryPhase === 'error' ? '重试' : '读取 Skill' }}
+              </button>
+            </div>
             <small>当前仅支持修改已有的 .agents/skills/&lt;名称&gt;/SKILL.md</small>
-          </label>
+
+            <div v-if="inventoryPhase !== 'idle'" class="skill-picker" :class="inventoryPhase" :aria-busy="inventoryPhase === 'loading'">
+              <p v-if="inventoryPhase === 'loading'">正在读取项目中的 Skill…</p>
+              <div v-else-if="inventoryPhase === 'error'" class="picker-message error-message">
+                <strong>没有读取到项目</strong><span>{{ inventoryError }}</span>
+              </div>
+              <template v-else-if="skillInventory">
+                <div v-if="skillInventory.status === 'PARTIAL'" class="picker-message partial-message">
+                  <strong>只读取到部分结果</strong><span>仍可选择下列状态完整的 Skill。</span>
+                </div>
+                <div v-if="skillInventory.skills.length === 0" class="picker-message">
+                  <strong>没有找到已有 Skill</strong><span>当前版本还不能在这里创建第一个 Skill。</span>
+                </div>
+                <template v-else>
+                  <label class="picker-select">
+                    <span>要更新的 Skill</span>
+                    <select :value="selectedInventoryName" @change="handleInventorySelection">
+                      <option value="">请选择</option>
+                        <option v-for="skill in skillInventory.skills" :key="skill.logicalPath" :value="skill.name" :disabled="!skill.availableForPreview">
+                        {{ skill.name }} · {{ inventoryStateLabel(skill.state) }}
+                      </option>
+                    </select>
+                  </label>
+                  <div v-if="selectedInventorySkill" class="selected-skill">
+                    <strong>{{ selectedInventorySkill.name }}</strong>
+                    <span class="mono">{{ selectedInventorySkill.logicalPath }}</span>
+                    <small>配套文件 {{ selectedInventorySkill.supportingFileCount }} 个<span v-if="selectedInventorySkill.risks.length"> · {{ selectedInventorySkill.risks.length }} 项需留意</span></small>
+                  </div>
+                  <p v-else-if="!skillInventory.skills.some(skill => skill.availableForPreview)" class="no-selectable">没有信息完整、可以进入预览的 Skill。</p>
+                </template>
+                <small class="inventory-note">这里只读取文件信息，不读取旧正文；预览会显示完整替换差异。</small>
+              </template>
+            </div>
+          </div>
           <div class="request-editor">
             <div class="editor-heading">
               <span>Skill 内容</span>
@@ -400,7 +567,7 @@ function errorMessage(error: unknown): string {
               <details class="form-section" open>
                 <summary>基本信息</summary>
                 <div class="form-fields">
-                  <label class="field"><span>文件名称</span><input v-model="skillForm.name" type="text" maxlength="63" autocomplete="off" spellcheck="false" placeholder="review-api-change" :disabled="busy" /><small>{{ targetSkillLogicalPath || '小写英文、数字和连字符' }}</small></label>
+                  <label class="field"><span>文件名称</span><input v-model="skillForm.name" type="text" maxlength="63" autocomplete="off" spellcheck="false" placeholder="review-api-change" :disabled="busy" :readonly="inventoryPhase === 'ready'" /><small>{{ targetSkillLogicalPath || '小写英文、数字和连字符' }}</small></label>
                   <label class="field"><span>用途说明</span><input v-model="skillForm.description" class="plain-input" type="text" maxlength="2048" placeholder="检查 API 变更的兼容性与风险" :disabled="busy" /></label>
                   <label class="field"><span>完成目标</span><textarea v-model="skillForm.goal" class="short-textarea" rows="2" maxlength="2048" placeholder="最终要交付什么结果" :disabled="busy" /></label>
                   <div class="paired-fields">
@@ -442,6 +609,7 @@ function errorMessage(error: unknown): string {
             <label v-else class="field advanced-editor">
               <textarea v-model="advancedRequest" rows="14" maxlength="32768" spellcheck="false" placeholder="粘贴 key: value 配置" :disabled="busy" />
               <small>用于已有配置或未在表单中提供的字段 · {{ advancedRequest.length.toLocaleString() }} / 32,768</small>
+              <small v-if="inventorySelectionIssue" class="inline-error">{{ inventorySelectionIssue }}</small>
             </label>
           </div>
         </div>

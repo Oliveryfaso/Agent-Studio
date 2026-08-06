@@ -334,6 +334,15 @@
 - 原因：旧页面公开了内部协议，却只提示三个字段，而核心要求十余类字段，普通用户无法仅凭页面完成第一次预览。表单修复激活路径且不复制后端事务能力；完整示例可用于熟悉流程，也用于确定性浏览器验收。
 - 下一步：把现有 Codex Skill inventory 通过只读接口接入页面，让用户先看到项目中的 Skill 并选择目标；随后再处理创建新 Skill、安装包和其他资产类型。
 
+## ADR-039：Inventory 只投影目标选择元数据，并绑定最终请求名称
+
+- 日期：2026-08-06
+- 状态：接受
+- 决定：新增 token/origin 保护的 `POST /api/v1/skills/inventory`，直接调用已有 `CodexSkillInventoryService`。HTTP envelope v1 只返回整体 COMPLETE/PARTIAL、目录名、逻辑路径、包状态、是否可进入预览、配套文件数量、风险枚举和 finding 数量；不返回正文、declared name、hash、reference 或 finding 详情，也不产生写入。
+- 目标一致性：用户从项目列表选择目录名后，普通表单名称由选择结果填写并只读；高级配置的唯一 `name:` 必须与所选目标一致，否则禁止预览。workspace 改动立即废弃旧 inventory 与选择；请求序号阻止旧响应覆盖新路径。
+- 语义边界：`availableForPreview` 只表示 inventory 信息足以让用户选择并尝试真实预览，不承诺目标一定可替换；编码、换行、当前状态和最终 Apply eligibility 仍由已有 preview service 判断。INVALID 包可进入预览以便用完整候选修复，PARTIAL 包不可选择。
+- 原因：目标选择必须参与实际 path 推导，不能成为装饰；同时复用现有 content-free inventory 比另建目录列表扫描器更小，也保留稳定排序和 partial-result 语义。
+
 ## 待决问题
 
 - [ ] 为正式工程选择 Java 构建工具与最小模块骨架；当前纯 JDK 脚本仅服务 Phase 1 spike。
