@@ -375,3 +375,10 @@
 - 将大幅宣传式 Hero 和三个全宽长区块改为紧凑应用栏与桌面两栏：左侧固定项目/变更配置，右侧集中状态、Diff、确认和应用记录；960px 以下自动退回单列。
 - 主界面不再直出英文协议状态和后端 detail；增加稳定中文状态映射，原始 plan/status/detail 只保留在折叠技术详情。`Guided request`、批准、事务、回退等工程措辞分别改为变更配置、应用更改、应用记录和恢复原文件。
 - Playwright 在真实临时 workspace 上复验预览、应用、恢复和 360px 布局；恢复后记录摘要跟随最新状态，避免继续显示“已应用/可以恢复”的过期信息。
+
+## 2026-08-06：用普通 Skill 表单补齐首次成功路径
+
+- 三路只读审查一致指出，产品已具备真实 preview/apply/rollback 闭环，但要求用户手写内部 guided request，而页面示例又没有覆盖后端全部必填字段；因此当前仍是实验原型，最大非安全缺口是首次使用激活。
+- Vue 默认入口改为“基本信息、使用范围、执行与检查”三组普通表单；提供完整示例、即时缺项提示、3+3 去重/交叉检查以及长度、条目、行数和 UTF-8 总预算检查。Skill 目标逻辑路径随合法名称显示。
+- 新增纯 TypeScript 确定性 serializer，固定生成 Skill/project 分类、permission NONE 与 risk LOW，再复用原有 Java API。高级配置模式继续接受原始 `key: value`，没有增加 LLM、依赖或新的 Java contract。
+- Vue build/typecheck、真实 existing-Skill 预览和 360px 视觉检查通过。Gate 7 仍是单页实验入口；下一刀是只读 Skill inventory endpoint + 页面目标选择器。
