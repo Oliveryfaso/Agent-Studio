@@ -369,3 +369,9 @@
 - Java loopback 服务新增可选的 canonical UI root、窄静态路径白名单和 CSP/no-store/nosniff 等头。启动 URI 用 fragment 传入 token；Vue 读取后清除地址栏并只在内存持有。API-only 启动方式保持兼容。
 - 新增 `scripts/build-ui.sh` 和 `scripts/run-local-web.sh`；CI 在 Linux、macOS、Windows 的 Java safety 后同时执行 lockfile UI build。Vue/Vite/TypeScript/vue-tsc 是 UI 必需的构建依赖，不进入 Java 核心。
 - 新增 1 项 HTTP 静态/bootstrap fixture后，本地 Java 测试从 270 增至 271，conformance 保持 27 项；Vue build/typecheck 和真实浏览器 preview→apply→rollback 均通过，原始 fixture 字节恢复。Gate 7 进入“单页实验入口可用”，尚未达到普通用户安装与分发阶段。
+
+## 2026-08-06：将实验长页收敛为本地桌面工作台
+
+- 将大幅宣传式 Hero 和三个全宽长区块改为紧凑应用栏与桌面两栏：左侧固定项目/变更配置，右侧集中状态、Diff、确认和应用记录；960px 以下自动退回单列。
+- 主界面不再直出英文协议状态和后端 detail；增加稳定中文状态映射，原始 plan/status/detail 只保留在折叠技术详情。`Guided request`、批准、事务、回退等工程措辞分别改为变更配置、应用更改、应用记录和恢复原文件。
+- Playwright 在真实临时 workspace 上复验预览、应用、恢复和 360px 布局；恢复后记录摘要跟随最新状态，避免继续显示“已应用/可以恢复”的过期信息。

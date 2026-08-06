@@ -323,6 +323,7 @@
 - 会话边界：Java 生成 256-bit 进程期 token，并只通过同源启动 URL 的 fragment 交给页面；fragment 不会进入 HTTP 请求，页面读取后立即 `replaceState` 清除，token 不进入 localStorage/sessionStorage。输入变化会废弃旧 preview 和 approval；rollback 绑定 apply 当时的 workspace，而不是用户后来编辑的输入框。单页同一时刻只保留一个活动回退锚点；用户必须先回退，或明确保留当前变更并关闭页面回退入口，才能批准下一笔写入。
 - 静态边界：Java 只从启动时固定的 canonical `ui/dist` 读取 `index.html`、hash asset 和 favicon，不提供目录浏览或 SPA 任意 fallback；HTML no-store，hash asset immutable，并发送 CSP、nosniff、DENY frame 与 no-referrer。UI 不引用外部字体或 CDN。
 - 依赖与暂缓：Vue/Vite/TypeScript/vue-tsc 只用于 `ui/` 构建，Java 核心保持零第三方依赖。当前仍要求用户粘贴绝对路径和结构化 guided request；文件选择器、自然语言表单助手、自动打开浏览器、安装包与恢复中心留到后续 gate。
+- 产品语言：界面不使用宣传式 AI 口号，也不把 `READY_REPLACE`、`STALE_PREIMAGE`、`RECOVERY_REQUIRED` 等协议值当作主文案。用户操作使用“预览变更、应用更改、恢复原文件”等直白语言；原始状态和结果码保留在可展开的技术详情中，确保可诊断性不因简化文案而丢失。
 
 ## 待决问题
 

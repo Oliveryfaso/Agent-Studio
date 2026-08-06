@@ -900,6 +900,7 @@ redaction profile + consent scope + retention class
 - `/api/v1/runtime` 与 `skill-changes/preview|apply|rollback` 返回 typed schema v1；HTTP controller 直接调用 Blueprint、Draft 与 Controlled service，不启动子进程、不解析 CLI stdout。
 - mutation endpoint 同时校验精确 Host、同源 Origin 和 256-bit 进程期 bearer token，不发送宽泛 CORS。48 KiB body budget、严格 UTF-8/flat JSON 与稳定 error envelope 已进入 fixture。
 - Vue 3 + TypeScript 单页现已完成 workspace/guided request、真实 Diff、确认、apply receipt 与 rollback；输入变化会废弃旧 preview/approval，并明确显示 blocked/no-change/stale/current-target-changed/recovery/network 状态。
+- 界面采用本地桌面工作台布局：桌面端左侧填写项目与变更配置，右侧查看状态、文件差异和应用记录；窄屏退回单列。普通界面使用中文产品状态，后端状态码和结果码只放在折叠的“技术详情”中。
 - Java 进程同源托管 `ui/dist` 的窄白名单静态资源。启动链接只在 fragment 中携带 token；Vue 读取后立即清除 fragment，并只把 token 保存在页面内存。
 - `scripts/build-ui.sh` 使用 lockfile 安装并构建；`scripts/run-local-web.sh <trusted-state-root>` 编译 Java 并启动页面。Vue/Vite/TypeScript/vue-tsc 是仅限 `ui/` 的必要构建依赖，不进入安全关键 Java 核心。
 - 当前仍没有文件选择器、示例向导生成器、history database、Recovery Center、桌面壳或安装包；关闭/刷新页面后必须使用当前进程打印的新启动链接重新进入。
