@@ -129,6 +129,12 @@ button { -webkit-tap-highlight-color: transparent; }
 .no-selectable { color: #765525 !important; }
 .inline-error { color: var(--red) !important; }
 .request-editor { display: grid; gap: 12px; min-width: 0; }
+.request-editor[inert] { opacity: .68; }
+.source-notice { display: grid; gap: 4px; font-size: 11px; line-height: 1.55; }
+.raw-source { min-width: 0; padding: 9px; border: 1px solid var(--line); border-radius: 6px; background: #f8f7f3; }
+.raw-source summary { cursor: pointer; font-weight: 700; }
+.raw-source p { margin: 8px 0; color: var(--muted); }
+.raw-source pre { max-width: 100%; max-height: 320px; margin: 0; padding: 10px; overflow: auto; white-space: pre; border-radius: 5px; background: #202522; color: #eef2ed; font-size: 10px; line-height: 1.55; }
 .editor-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .editor-heading > span { font-size: 12px; font-weight: 700; }
 .mode-switch { display: inline-flex; padding: 2px; border: 1px solid #cbd0cc; border-radius: 6px; background: #f2f4f1; }

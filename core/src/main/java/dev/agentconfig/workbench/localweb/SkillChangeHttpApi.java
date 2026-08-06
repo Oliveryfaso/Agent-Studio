@@ -3,6 +3,9 @@ package dev.agentconfig.workbench.localweb;
 import dev.agentconfig.workbench.blueprint.BlueprintPreviewService;
 import dev.agentconfig.workbench.skill.CodexSkillInventory;
 import dev.agentconfig.workbench.skill.CodexSkillInventoryService;
+import dev.agentconfig.workbench.skill.CodexSkillContent;
+import dev.agentconfig.workbench.skill.CodexSkillContentService;
+import dev.agentconfig.workbench.skilldraft.CodexSkillFormProjection;
 import dev.agentconfig.workbench.skilldraft.CodexSkillDraftPreview;
 import dev.agentconfig.workbench.skilldraft.CodexSkillDraftService;
 import dev.agentconfig.workbench.transaction.ControlledExistingSkillService;
@@ -81,10 +84,57 @@ final class SkillChangeHttpApi {
         }
     }
 
+    ApiResponse content(Map<String, Object> request, String requestId) {
+        try {
+            allowKeys(request, Set.of("hostId", "workspacePath", "logicalPath"));
+            requireHost(request);
+            CodexSkillContent content = new CodexSkillContentService().read(
+                    path(request, "workspacePath"), text(request, "logicalPath", 256));
+            CodexSkillFormProjection projection = content.projection();
+            StringBuilder result = begin(requestId, "skill-content")
+                    .append("  \"hostId\": \"codex\",\n")
+                    .append("  \"status\": ").append(json(projection.status().name())).append(",\n")
+                    .append("  \"logicalPath\": ").append(json(content.logicalPath())).append(",\n")
+                    .append("  \"sourceSha256\": ").append(json(content.sha256())).append(",\n")
+                    .append("  \"byteSize\": ").append(content.byteSize()).append(",\n")
+                    .append("  \"rendererProfileId\": ")
+                    .append(json(projection.rendererProfileId())).append(",\n")
+                    .append("  \"missingFormFields\": [");
+            for (int index = 0; index < projection.missingFields().size(); index++) {
+                if (index > 0) result.append(", ");
+                result.append(json(projection.missingFields().get(index)));
+            }
+            result.append("],\n  \"losses\": [");
+            if (projection.status() == CodexSkillFormProjection.Status.PARTIAL_FORM) {
+                result.append("\"ROUTING_EVAL_CASES_NOT_PERSISTED\", ")
+                        .append("\"DESCRIPTION_LIST_BOUNDARIES_FLATTENED\"");
+            }
+            result.append("],\n  \"form\": ");
+            if (projection.form().isPresent()) appendForm(result, projection.form().orElseThrow());
+            else result.append("null");
+            result.append(",\n  \"rawContent\": ").append(json(content.content())).append(",\n")
+                    .append("  \"contentIncluded\": true,\n")
+                    .append("  \"writesPerformed\": false\n}");
+            return new ApiResponse(200, result.toString());
+        } catch (IllegalArgumentException exception) {
+            return error(400, requestId, "INPUT_INVALID", false);
+        } catch (CodexSkillContentService.UnavailableException exception) {
+            return error(404, requestId, "SKILL_NOT_AVAILABLE", false);
+        } catch (CodexSkillContentService.ChangedException exception) {
+            return error(409, requestId, "TARGET_CHANGED_SINCE_INVENTORY", true);
+        } catch (CodexSkillContentService.TooLargeException exception) {
+            return error(422, requestId, "CONTENT_TOO_LARGE", false);
+        } catch (CodexSkillContentService.InvalidUtf8Exception exception) {
+            return error(422, requestId, "CONTENT_NOT_UTF8", false);
+        } catch (IOException exception) {
+            return error(500, requestId, "CORE_IO_FAILED", true);
+        }
+    }
+
     ApiResponse preview(Map<String, Object> request, String requestId) {
         try {
             allowKeys(request, Set.of("hostId", "workspacePath", "guidedRequest", "includeDiff",
-                    "operation"));
+                    "operation", "expectedPreimageSha256"));
             requireHost(request);
             Path workspace = path(request, "workspacePath");
             String guidedRequest = text(request, "guidedRequest", 32 * 1024);
@@ -93,6 +143,12 @@ final class SkillChangeHttpApi {
             PreparedControlledSkillChange prepared = new ControlledExistingSkillService()
                     .prepare(workspace, draft(guidedRequest), mode);
             ControlledSkillChangePlan plan = prepared.plan();
+            Optional<String> expectedPreimage = optionalText(
+                    request, "expectedPreimageSha256", 64);
+            if (mode == Mode.UPDATE_EXISTING && expectedPreimage.isPresent()
+                    && !plan.preimageSha256().equals(expectedPreimage)) {
+                return error(409, requestId, "LOADED_CONTENT_STALE", true);
+            }
             int status = switch (plan.status()) {
                 case READY_CREATE, READY_REPLACE, NO_CHANGE -> 200;
                 case BLOCKED -> 422;
@@ -248,6 +304,42 @@ final class SkillChangeHttpApi {
         if (value == null) return fallback;
         if (!(value instanceof Boolean bool)) throw new IllegalArgumentException(field);
         return bool;
+    }
+
+    private static Optional<String> optionalText(
+            Map<String, Object> request, String field, int maxLength) {
+        Object value = request.get(field);
+        if (value == null) return Optional.empty();
+        if (!(value instanceof String text) || text.isBlank() || text.length() > maxLength) {
+            throw new IllegalArgumentException(field);
+        }
+        return Optional.of(text);
+    }
+
+    private static void appendForm(StringBuilder result, CodexSkillFormProjection.Form form) {
+        result.append("{\n")
+                .append("    \"name\": ").append(json(form.name())).append(",\n")
+                .append("    \"description\": ").append(json(form.description())).append(",\n")
+                .append("    \"goal\": ").append(json(form.goal())).append(",\n");
+        appendStrings(result, "inputs", form.inputs(), true);
+        appendStrings(result, "outputs", form.outputs(), true);
+        appendStrings(result, "triggers", form.triggers(), true);
+        appendStrings(result, "exclusions", form.exclusions(), true);
+        appendStrings(result, "boundaries", form.boundaries(), true);
+        appendStrings(result, "steps", form.steps(), true);
+        result.append("    \"completion\": ").append(json(form.completion())).append(",\n");
+        appendStrings(result, "validations", form.validations(), false);
+        result.append("  }");
+    }
+
+    private static void appendStrings(
+            StringBuilder result, String field, java.util.List<String> values, boolean comma) {
+        result.append("    ").append(json(field)).append(": [");
+        for (int index = 0; index < values.size(); index++) {
+            if (index > 0) result.append(", ");
+            result.append(json(values.get(index)));
+        }
+        result.append(']').append(comma ? ",\n" : "\n");
     }
 
     private static Optional<String> canonical(Path path) {

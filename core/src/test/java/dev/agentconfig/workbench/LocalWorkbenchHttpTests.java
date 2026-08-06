@@ -37,6 +37,7 @@ public final class LocalWorkbenchHttpTests {
         run("inventory lists previewable Skills without content", this::inventory);
         run("inventory distinguishes empty and partial results", this::inventoryStates);
         run("inventory rejects invalid requests with typed errors", this::inventoryErrors);
+        run("selected Skill content is explicit and stale-bound", this::skillContent);
         run("preview apply rollback is byte identical", this::endToEnd);
         run("empty project can create and undo its first Skill", this::createFirstSkill);
         run("create approval rejects target and parent topology changes", this::createGuards);
@@ -119,6 +120,35 @@ public final class LocalWorkbenchHttpTests {
                     "Skill ordering");
             check(!response.body().contains(marker), "inventory exposed Skill content");
             check(!response.body().contains("sha256"), "inventory exposed hash");
+        });
+    }
+
+    private void skillContent() throws Exception {
+        withFixture(fixture -> {
+            String source = "---\nname: review-api-change\ndescription: Custom review\n---\n\n"
+                    + "# Private marker 中文\n";
+            Files.writeString(fixture.target(), source, StandardCharsets.UTF_8);
+            String body = "{\"hostId\":\"codex\",\"workspacePath\":"
+                    + json(fixture.workspace().toString()) + ",\"logicalPath\":"
+                    + json(".agents/skills/review-api-change/SKILL.md") + "}";
+            HttpResponse<String> response = fixture.postSkillContent(body);
+            equal(200, response.statusCode(), "content status");
+            contains(response.body(), "\"command\": \"skill-content\"");
+            contains(response.body(), "\"status\": \"ADVANCED_ONLY\"");
+            contains(response.body(), "Private marker 中文");
+            contains(response.body(), "\"contentIncluded\": true");
+            contains(response.body(), "\"writesPerformed\": false");
+            String hash = capture(response.body(), "\\\"sourceSha256\\\": \\\"([0-9a-f]{64})\\\"");
+
+            String stalePreview = previewBody(fixture.workspace(), true)
+                    .replace("}", ",\"expectedPreimageSha256\":" + json("0".repeat(64)) + "}");
+            HttpResponse<String> stale = fixture.post("preview", stalePreview);
+            equal(409, stale.statusCode(), "stale loaded source");
+            contains(stale.body(), "LOADED_CONTENT_STALE");
+
+            String matchingPreview = previewBody(fixture.workspace(), true)
+                    .replace("}", ",\"expectedPreimageSha256\":" + json(hash) + "}");
+            equal(200, fixture.post("preview", matchingPreview).statusCode(), "matching source");
         });
     }
 
@@ -585,6 +615,9 @@ public final class LocalWorkbenchHttpTests {
         URI inventoryEndpoint() {
             return server.baseUri().resolve("api/v1/skills/inventory");
         }
+        URI skillContentEndpoint() {
+            return server.baseUri().resolve("api/v1/skills/content");
+        }
         HttpResponse<String> postInventory(String body) throws Exception {
             return postInventory(body, server.sessionToken(), origin());
         }
@@ -597,6 +630,16 @@ public final class LocalWorkbenchHttpTests {
             if (token != null) builder.header("Authorization", "Bearer " + token);
             return HttpClient.newHttpClient().send(builder.POST(
                     HttpRequest.BodyPublishers.ofString(body)).build(),
+                    HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        }
+        HttpResponse<String> postSkillContent(String body) throws Exception {
+            HttpRequest request = HttpRequest.newBuilder(skillContentEndpoint())
+                    .timeout(Duration.ofSeconds(5))
+                    .header("Content-Type", "application/json")
+                    .header("Origin", origin())
+                    .header("Authorization", "Bearer " + server.sessionToken())
+                    .POST(HttpRequest.BodyPublishers.ofString(body)).build();
+            return HttpClient.newHttpClient().send(request,
                     HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
         }
         HttpResponse<String> post(String action, String body) throws Exception {

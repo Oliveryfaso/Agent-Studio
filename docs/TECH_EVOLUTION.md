@@ -397,3 +397,10 @@
 - manifest 升为 v2，区分 absent/existing preimage 并记录本事务实际创建的父目录。创建 rollback 只有在 candidate identity/hash/权限都未变化时才删除文件，并逆序清理本事务创建且仍为空的目录；已有目录和非空目录不删除。
 - 页面在创建后刷新 inventory 并转入已选中的更新状态；撤销创建后刷新空状态，同时保留用户填写的其余表单内容。真实浏览器已完成空项目 preview → create → inventory refresh → undo 流程。
 - 新增 4 项 HTTP 端到端 fixture，覆盖完整创建/撤销、目标冲突、父目录拓扑变化、父目录 identity 替换和旧 v1 更新事务回退兼容；本地 Java 测试为 278 项，conformance 保持 27 项，Vue typecheck/build 通过。Gate 6 仍因 crash recovery、OS CAS、durability 与 Windows reparse 保持部分开放；下一产品切片是读取并回填已有 Skill。
+
+## 2026-08-06：读取已有 Skill 并做损失感知回填
+
+- loopback 新增受限 `POST /api/v1/skills/content`：只接受 fresh inventory 中唯一匹配且非 PARTIAL 的 `.agents/skills/<name>/SKILL.md`，不接受任意文件路径；再次执行 NOFOLLOW/containment、128 KiB、严格 UTF-8 与 inventory hash/size 复核，只返回用户明确选择的单个正文，不读取 supporting files。
+- 新增 `codex-project-skill-template-v1` 读取投影。只有固定 frontmatter、章节顺序、连续 workflow 编号、canonical Markdown 转义和重新渲染字节完全一致时才回填；由于运行时模板刻意不保存 should-trigger/should-not-trigger 评测例，状态明确为 `PARTIAL_FORM`，不生成假例子。自定义结构为 `ADVANCED_ONLY`，页面只读展示完整原文。
+- UI 为内容读取增加独立 loading/error/stale 状态和迟到响应隔离。成功读取的 source SHA 会传给 update preview；若文件在读取后被外部修改，服务返回 `LOADED_CONTENT_STALE`，不会产生可批准计划。
+- 新增 4 项 core content fixture 与 1 项 HTTP 端到端 fixture；本地 Java 测试从 278 增至 283，conformance 保持 27 项，Vue typecheck/build 通过。真实浏览器验证自定义 Skill 原文降级、零 console error 与 360px `scrollWidth == clientWidth`。下一刀是独立、受验证的 raw `SKILL.md` candidate/preview/apply 路径，不能把原文伪装成现有 guided request。

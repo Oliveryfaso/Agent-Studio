@@ -900,10 +900,10 @@ redaction profile + consent scope + retention class
 - `/api/v1/runtime`、`skills/inventory` 与 `skill-changes/preview|apply|rollback` 返回 typed HTTP schema v1；HTTP controller 直接调用既有 Inventory、Blueprint、Draft 与 Controlled service，不启动子进程、不解析 CLI stdout。Inventory core 仍保留自己的 schema v2，不与 HTTP envelope 混称。
 - mutation endpoint 同时校验精确 Host、同源 Origin 和 256-bit 进程期 bearer token，不发送宽泛 CORS。48 KiB body budget、严格 UTF-8/flat JSON 与稳定 error envelope 已进入 fixture。
 - Vue 3 + TypeScript 单页现已完成 workspace/Skill inventory、显式创建或更新模式、普通 Skill 表单、真实 Diff、确认、apply receipt 与 rollback；空项目直接进入创建模式，预览列出缺失目录，创建/撤销后自动刷新列表。操作模式与输入变化都会废弃旧 preview/approval，并明确显示 empty/partial/error/blocked/no-change/stale/current-target-changed/recovery/network 状态。
-- 界面采用本地桌面工作台布局：桌面端左侧选择操作、目标与内容，右侧查看状态、文件差异和应用记录；窄屏退回单列。普通界面使用中文产品状态，后端状态码和结果码只放在折叠的“技术详情”中。下一项产品入口工作是读取并回填已有 Skill 内容，让“更新”成为真正的日常编辑流程。
+- 界面采用本地桌面工作台布局：桌面端左侧选择操作、目标与内容，右侧查看状态、文件差异和应用记录；窄屏退回单列。普通界面使用中文产品状态，后端状态码和结果码只放在折叠的“技术详情”中。已有 Skill 现在会在明确选择后读取：template-v1 只回填字节级结构匹配且可证明的字段，自定义结构保留完整原文只读展示；加载 SHA 与更新 preview 绑定，避免用旧表单覆盖外部新编辑。
 - Java 进程同源托管 `ui/dist` 的窄白名单静态资源。启动链接只在 fragment 中携带 token；Vue 读取后立即清除 fragment，并只把 token 保存在页面内存。
 - `scripts/build-ui.sh` 使用 lockfile 安装并构建；`scripts/run-local-web.sh <trusted-state-root>` 编译 Java 并启动页面。Vue/Vite/TypeScript/vue-tsc 是仅限 `ui/` 的必要构建依赖，不进入安全关键 Java 核心。
-- 当前仍不会读取并回填已有 Skill 正文，也没有系统文件夹选择器、可重启恢复入口、桌面壳或安装包；关闭/刷新页面后必须使用当前进程打印的新启动链接重新进入。
+- 当前还不能直接编辑并应用非模板 `SKILL.md` 原文；template-v1 也无法从运行时正文恢复未持久化的 3+3 路由评测例，因此会要求用户补齐。系统文件夹选择器、可重启恢复入口、桌面壳和安装包仍未完成；关闭/刷新页面后必须使用当前进程打印的新启动链接重新进入。
 
 ### Phase 7：Wave 2 preview、可选 AI 和 Prompt Export
 
@@ -938,7 +938,7 @@ redaction profile + consent scope + retention class
 | Gate 4 | 双向转换预览 | canonical Codex root wrapper 纵向切片已验证；能力冻结 | 只有核心闭环验证后才复审通用/反向 renderer |
 | Gate 5 | ChangeSet、快照、事务与恢复 | fixture apply/rollback 进程恢复 + 显式 pending discovery 完成 | 断电持久性、OS 级 CAS/dir-handle-relative 防 TOCTOU、Windows reparse/junction、长期 vault；尚无自动启动恢复 |
 | Gate 6 | 真实工作区 Apply | 部分开放：Codex 单 Skill 创建/更新、真实 Diff、批准与回退已接通；CLI 继续只更新已有目标 | 自动恢复、多文件、跨进程 CAS、Windows reparse 与分发加固 |
-| Gate 7 | UI、Wave 1、GitHub/分发 | 核心单页流程可用：inventory、创建/更新模式、普通表单、真实 Diff/apply/rollback 已接通 typed loopback；GitHub 发布基线完成 | 已有内容读取/回填、系统 workspace picker、可重启恢复、桌面安装包、签名/SBOM |
+| Gate 7 | UI、Wave 1、GitHub/分发 | 核心单页流程可用：inventory、创建/更新、已有内容部分回填/自定义原文查看、普通表单、真实 Diff/apply/rollback 已接通 typed loopback；GitHub 发布基线完成 | 非模板原文编辑、系统 workspace picker、可重启恢复、桌面安装包、签名/SBOM |
 
 ## 18. MVP 发布门槛
 

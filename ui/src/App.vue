@@ -29,6 +29,32 @@ interface SkillInventoryResponse extends ApiErrorBody {
   findingCounts: { warning: number; error: number; blocking: number }
 }
 
+interface SkillContentResponse extends ApiErrorBody {
+  status: 'PARTIAL_FORM' | 'ADVANCED_ONLY'
+  logicalPath: string
+  sourceSha256: string
+  byteSize: number
+  rendererProfileId: string
+  missingFormFields: string[]
+  losses: string[]
+  form: null | {
+    name: string
+    description: string
+    goal: string
+    inputs: string[]
+    outputs: string[]
+    triggers: string[]
+    exclusions: string[]
+    boundaries: string[]
+    steps: string[]
+    completion: string
+    validations: string[]
+  }
+  rawContent: string
+  contentIncluded: true
+  writesPerformed: false
+}
+
 interface PreviewResponse extends ApiErrorBody {
   operation: 'CREATE' | 'UPDATE'
   authorizedRoot: string | null
@@ -83,8 +109,14 @@ const skillInventory = ref<SkillInventoryResponse | null>(null)
 const inventoryWorkspace = ref('')
 const inventoryError = ref('')
 const selectedInventoryName = ref('')
+const contentPhase = ref<'idle' | 'loading' | 'ready' | 'error'>('idle')
+const loadedSourceSha256 = ref('')
+const sourcePresentation = ref<'none' | 'partial-form' | 'advanced-only'>('none')
+const rawSourceContent = ref('')
+const contentError = ref('')
 const operationMode = ref<'update' | 'create'>('update')
 let inventorySequence = 0
+let contentSequence = 0
 const inputMode = ref<'form' | 'advanced'>('form')
 const skillForm = reactive(emptySkillForm())
 const advancedRequest = ref('')
@@ -129,13 +161,15 @@ const busy = computed(() => phase.value !== 'idle')
 const canLoadInventory = computed(() => Boolean(
   sessionToken.value && workspacePath.value.trim() && inventoryPhase.value !== 'loading',
 ))
-const currentSignature = computed(() => `${operationMode.value}\u0000${workspacePath.value}\u0000${guidedRequest.value}`)
+const currentSignature = computed(() => `${operationMode.value}\u0000${workspacePath.value}\u0000${loadedSourceSha256.value}\u0000${guidedRequest.value}`)
 const canPreview = computed(() => Boolean(
   sessionToken.value
   && workspacePath.value.trim()
   && guidedRequest.value.trim()
   && inventoryPhase.value !== 'loading'
+  && contentPhase.value !== 'loading'
   && (inputMode.value === 'advanced' || formIssues.value.length === 0)
+  && (operationMode.value === 'create' || Boolean(loadedSourceSha256.value))
   && !inventorySelectionIssue.value
   && !busy.value,
 ))
@@ -173,11 +207,13 @@ watch([workspacePath, guidedRequest, operationMode], () => {
       && inventoryWorkspace.value !== workspacePath.value.trim()) {
     if (skillForm.name === selectedInventoryName.value) skillForm.name = ''
     inventorySequence++
+    contentSequence++
     inventoryPhase.value = 'idle'
     skillInventory.value = null
     inventoryWorkspace.value = ''
     inventoryError.value = ''
     selectedInventoryName.value = ''
+    resetLoadedContent()
   }
 })
 
@@ -214,6 +250,7 @@ function selectOperation(mode: 'update' | 'create'): void {
   if (mode === 'create') {
     if (skillForm.name === selectedName) skillForm.name = ''
     selectedInventoryName.value = ''
+    resetLoadedContent()
     setMessage('填写名称和内容，预览将要创建的新文件。', 'neutral')
   } else {
     skillForm.name = selectedName
@@ -268,23 +305,82 @@ async function loadSkillInventory(): Promise<void> {
   }
 }
 
-function selectInventorySkill(skill: SkillInventoryResponse['skills'][number]): void {
+async function selectInventorySkill(skill: SkillInventoryResponse['skills'][number]): Promise<void> {
   if (!skill.availableForPreview) return
-  selectedInventoryName.value = skill.name
-  operationMode.value = 'update'
-  skillForm.name = skill.name
-  selectInputMode('form')
-  setMessage(`已选择 ${skill.name}，请填写或检查其余内容。`, 'neutral')
+  const workspace = workspacePath.value.trim()
+  const requestSequence = ++contentSequence
+  contentPhase.value = 'loading'
+  contentError.value = ''
+  setMessage(`正在读取 ${skill.name} 的内容…`, 'neutral')
+  try {
+    const result = await post<SkillContentResponse>('skills/content', {
+      hostId: 'codex', workspacePath: workspace, logicalPath: skill.logicalPath,
+    })
+    if (requestSequence !== contentSequence || workspace !== workspacePath.value.trim()) return
+    operationMode.value = 'update'
+    selectedInventoryName.value = skill.name
+    loadedSourceSha256.value = result.sourceSha256
+    rawSourceContent.value = result.rawContent
+    if (result.status === 'PARTIAL_FORM' && result.form) {
+      Object.assign(skillForm, {
+        name: result.form.name,
+        description: result.form.description,
+        goal: result.form.goal,
+        inputs: result.form.inputs.join('\n'),
+        outputs: result.form.outputs.join('\n'),
+        triggers: result.form.triggers.join('\n'),
+        exclusions: result.form.exclusions.join('\n'),
+        boundaries: result.form.boundaries.join('\n'),
+        positiveExamples: '',
+        negativeExamples: '',
+        steps: result.form.steps.join('\n'),
+        completion: result.form.completion,
+        validations: result.form.validations.join('\n'),
+      })
+      sourcePresentation.value = 'partial-form'
+      selectInputMode('form')
+      setMessage('已填入可识别内容；原文件没有保存触发测试示例，请补充后再预览。', 'warning')
+    } else {
+      Object.assign(skillForm, emptySkillForm(), { name: skill.name })
+      sourcePresentation.value = 'advanced-only'
+      selectInputMode('form')
+      setMessage('这个 Skill 使用了自定义结构。已保留原文供核对，填写表单后可预览整体替换。', 'warning')
+    }
+    contentPhase.value = 'ready'
+  } catch (error) {
+    if (requestSequence !== contentSequence || workspace !== workspacePath.value.trim()) return
+    contentPhase.value = 'error'
+    contentError.value = skillContentErrorMessage(error)
+    setMessage('没有读取到文件内容，当前填写内容未改变。', 'danger')
+  }
 }
 
-function handleInventorySelection(event: Event): void {
+async function handleInventorySelection(event: Event): Promise<void> {
   const name = (event.target as HTMLSelectElement).value
   const skill = skillInventory.value?.skills.find(candidate => candidate.name === name)
-  if (skill) selectInventorySkill(skill)
+  if (skill) await selectInventorySkill(skill)
   else {
     if (skillForm.name === selectedInventoryName.value) skillForm.name = ''
     selectedInventoryName.value = ''
   }
+}
+
+function resetLoadedContent(): void {
+  contentSequence++
+  contentPhase.value = 'idle'
+  loadedSourceSha256.value = ''
+  sourcePresentation.value = 'none'
+  rawSourceContent.value = ''
+  contentError.value = ''
+}
+
+function skillContentErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    if (error.message === 'SKILL_NOT_AVAILABLE') return '这个 Skill 当前不可安全读取，请重新读取项目。'
+    if (error.message === 'TARGET_CHANGED_SINCE_INVENTORY') return '文件刚刚发生变化，请重新选择。'
+    if (error.message === 'CONTENT_NOT_UTF8') return '文件不是有效的 UTF-8 文本。'
+  }
+  return inventoryErrorMessage(error)
 }
 
 function inventoryStateLabel(state: SkillInventoryResponse['skills'][number]['state']): string {
@@ -353,6 +449,8 @@ async function requestPreview(): Promise<void> {
       guidedRequest: guidedRequest.value,
       includeDiff: true,
       operation: operationMode.value === 'create' ? 'CREATE' : 'UPDATE',
+      ...(operationMode.value === 'update'
+        ? { expectedPreimageSha256: loadedSourceSha256.value } : {}),
     })
     preview.value = result
     previewSignature.value = currentSignature.value
@@ -408,10 +506,8 @@ async function applyChange(): Promise<void> {
       : result.status === 'RECOVERY_REQUIRED' ? 'danger' : 'warning'
     if (result.status === 'VERIFIED_APPLIED') {
       await loadSkillInventory()
-      if (result.operation === 'CREATE') {
-        const created = skillInventory.value?.skills.find(skill => skill.logicalPath === result.logicalPath)
-        if (created) selectInventorySkill(created)
-      }
+      const applied = skillInventory.value?.skills.find(skill => skill.logicalPath === result.logicalPath)
+      if (applied) await selectInventorySkill(applied)
     }
     setMessage(applyStatus(result), tone)
   } catch (error) {
@@ -532,6 +628,7 @@ function errorMessage(error: unknown): string {
   if (error instanceof Error) {
     if (error.message === 'SESSION_TOKEN_INVALID') return '连接已失效，请重新打开启动命令给出的链接。'
     if (error.message === 'INPUT_INVALID') return '输入格式不正确，请检查项目路径和变更配置。'
+    if (error.message === 'LOADED_CONTENT_STALE') return '文件在读取后发生了变化，请重新选择 Skill 再预览。'
     return `请求失败：${detailLabel(error.message)}`
   }
   return '发生未知错误，请重试。'
@@ -601,13 +698,19 @@ function errorMessage(error: unknown): string {
                     <span class="mono">{{ selectedInventorySkill.logicalPath }}</span>
                     <small>配套文件 {{ selectedInventorySkill.supportingFileCount }} 个<span v-if="selectedInventorySkill.risks.length"> · {{ selectedInventorySkill.risks.length }} 项需留意</span></small>
                   </div>
+                  <div v-if="contentPhase === 'loading'" class="picker-message content-message">
+                    <strong>正在读取内容</strong><span>读取完成前不会替换当前填写内容。</span>
+                  </div>
+                  <div v-else-if="contentPhase === 'error'" class="picker-message error-message">
+                    <strong>内容未加载</strong><span>{{ contentError }}</span>
+                  </div>
                   <p v-else-if="!skillInventory.skills.some(skill => skill.availableForPreview)" class="no-selectable">没有信息完整、可以进入预览的 Skill。</p>
                 </template>
-                <small class="inventory-note">这里只读取文件信息，不读取旧正文；预览会显示完整替换差异。</small>
+                <small class="inventory-note">选择 Skill 后会读取它的 SKILL.md；配套文件不会被打开。</small>
               </template>
             </div>
           </div>
-          <div class="request-editor">
+          <div class="request-editor" :inert="contentPhase === 'loading'" :aria-busy="contentPhase === 'loading'">
             <div class="editor-heading">
               <span>Skill 内容</span>
               <div class="mode-switch" aria-label="内容填写方式">
@@ -615,6 +718,16 @@ function errorMessage(error: unknown): string {
                 <button type="button" :class="{ active: inputMode === 'advanced' }" :aria-pressed="inputMode === 'advanced'" :disabled="busy" @click="selectInputMode('advanced')">高级配置</button>
               </div>
             </div>
+
+            <div v-if="sourcePresentation === 'partial-form'" class="source-notice partial-message">
+              <strong>已回填可确认的字段</strong>
+              <span>运行时文件不保存 3 个应当使用和 3 个不应使用的测试例；补齐后才能预览。</span>
+            </div>
+            <details v-else-if="sourcePresentation === 'advanced-only'" class="source-notice raw-source">
+              <summary>查看现有 SKILL.md 原文</summary>
+              <p>此文件不是 Studio 的标准模板，当前版本不会猜测拆分。下面只读展示原文；若填写表单继续，预览会显示整份替换差异。</p>
+              <pre>{{ rawSourceContent }}</pre>
+            </details>
 
             <template v-if="inputMode === 'form'">
               <div class="form-tools">

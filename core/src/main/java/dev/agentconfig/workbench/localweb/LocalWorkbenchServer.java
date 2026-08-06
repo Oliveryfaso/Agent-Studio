@@ -82,6 +82,8 @@ public final class LocalWorkbenchServer implements AutoCloseable {
         server.createContext("/api/v1/runtime", workbench::runtime);
         server.createContext("/api/v1/skills/inventory",
                 workbench.post(workbench.api::inventory));
+        server.createContext("/api/v1/skills/content",
+                workbench.post(workbench.api::content));
         server.createContext("/api/v1/skill-changes/preview",
                 workbench.post(workbench.api::preview));
         server.createContext("/api/v1/skill-changes/apply",
@@ -181,7 +183,7 @@ public final class LocalWorkbenchServer implements AutoCloseable {
         send(exchange, 200, "{\n  \"schemaVersion\": 1,\n  \"status\": \"READY\",\n"
                 + "  \"productVersion\": \"0.1.0-lab\",\n"
                 + "  \"capabilities\": [{\"hostId\": \"codex\","
-                + " \"skillInventory\": true, \"skillCreate\": true,"
+                + " \"skillInventory\": true, \"skillContentRead\": true, \"skillCreate\": true,"
                 + " \"existingSkillReplace\": true}]\n}");
     }
 
