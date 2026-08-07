@@ -466,7 +466,7 @@ final class SkillChangeHttpApi {
                 .append("  \"command\": ").append(json(command)).append(",\n");
     }
 
-    private static ApiResponse error(int status, String requestId, String code,
+    static ApiResponse error(int status, String requestId, String code,
             boolean retryable) {
         String body = "{\n  \"schemaVersion\": 1,\n  \"requestId\": " + json(requestId)
                 + ",\n  \"error\": {\"code\": " + json(code)

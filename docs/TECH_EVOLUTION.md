@@ -425,3 +425,10 @@
 - 删除 560px 手机端导航与单列重排规则，页面以 1080px 桌面宽度为最小设计基线，只保留 1220px 以下的窄桌面压缩和横向完整性回退。产品不再把 360px 适配作为完成条件。
 - 真实浏览器在 1440×900 下完成空状态、导入与分类检查；3×3 保持正方形，右侧两条未分类 Skill 可见，console 为 0 error / 0 warning。Vue typecheck/build 通过；本轮不修改 Java 分类或事务核心，本地测试总数仍为 300。
 - 近期开发改为桌面壳、系统文件夹选择与可下载 alpha。已存在的路径限制、Diff、批准、stale 检查和回退继续生效；更多推演性安全研究暂停，待真实故障或分发要求再恢复。
+
+## 2026-08-07：接入 Java 目录选择器
+
+- 左侧工作栏从 232px 收窄为 168px，1220px 以下为 156px；项目路径文案与动作同步压缩，主分类区不缩水。
+- 新增可注入 `WorkspacePicker` 和 Swing `JFileChooser(DIRECTORIES_ONLY)` 实现。`POST /api/v1/workspaces/pick` 复用现有 token/Origin 边界，返回选择、取消、不可用或忙碌；选择结果只进入原有 workspace path 与 inventory 流程。
+- Swing 对话框只在带 UI 的本地入口启用并运行于 EDT。普通 API/headless 模式明确返回不可用，HTTP fixture 使用 fake picker，CI 不弹窗口。新增 1 项 HTTP 场景后 Java 测试从 300 增至 301，Vue typecheck/build 通过。
+- `jpackage` 明确留作下一切片：先补默认状态目录、Vue 安装资源定位、自动打开浏览器和启动 smoke test。当前不引入 Electron、JavaFX 或 Rust。

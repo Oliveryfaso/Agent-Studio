@@ -1,6 +1,7 @@
 package dev.agentconfig.workbench;
 
 import dev.agentconfig.workbench.localweb.LocalWorkbenchServer;
+import dev.agentconfig.workbench.localweb.WorkspacePicker;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
@@ -18,6 +19,9 @@ import java.security.MessageDigest;
 import java.time.Duration;
 import java.util.Comparator;
 import java.util.HexFormat;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -34,6 +38,7 @@ public final class LocalWorkbenchHttpTests {
         run("runtime binds loopback without CORS", this::runtime);
         run("built UI is same-origin with fragment token", this::staticUi);
         run("local API requires exact origin and bearer token", this::authBoundary);
+        run("desktop workspace picker is injected and explicit", this::workspacePicker);
         run("inventory lists previewable Skills without content", this::inventory);
         run("classification is deterministic content-free and read-only", this::classifications);
         run("inventory distinguishes empty and partial results", this::inventoryStates);
@@ -67,9 +72,117 @@ public final class LocalWorkbenchHttpTests {
             contains(response.body(), "\"skillInventory\": true");
             contains(response.body(), "\"skillClassification\": true");
             contains(response.body(), "\"skillCreate\": true");
+            contains(response.body(), "\"workspacePicker\": false");
             check(response.headers().firstValue("Access-Control-Allow-Origin").isEmpty(),
                     "CORS header present");
+            HttpResponse<String> unavailable = fixture.postWorkspacePicker("{}");
+            equal(200, unavailable.statusCode(), "unavailable picker status");
+            contains(unavailable.body(), "\"status\": \"UNAVAILABLE\"");
         });
+    }
+
+    private void workspacePicker() throws Exception {
+        Path base = Files.createTempDirectory("acw-http-test-picker-");
+        try {
+            Path state = Files.createDirectory(base.resolve("state"));
+            Path selected = Files.createDirectory(base.resolve("selected project"));
+            WorkspacePicker picker = new WorkspacePicker() {
+                @Override
+                public boolean available() {
+                    return true;
+                }
+
+                @Override
+                public WorkspacePicker.Result pick() {
+                    return WorkspacePicker.Result.selected(selected);
+                }
+            };
+            try (LocalWorkbenchServer server = LocalWorkbenchServer.start(state, picker)) {
+                HttpResponse<String> runtime = client.send(HttpRequest.newBuilder(
+                        server.baseUri().resolve("api/v1/runtime")).GET().build(),
+                        HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+                contains(runtime.body(), "\"workspacePicker\": true");
+                HttpResponse<String> response = postWorkspacePicker(server, "{}");
+                equal(200, response.statusCode(), "selected picker status");
+                contains(response.body(), "\"status\": \"SELECTED\"");
+                contains(response.body(), json(selected.toAbsolutePath().normalize().toString()));
+                equal(400, postWorkspacePicker(server, "{\"unexpected\":true}")
+                        .statusCode(), "picker input boundary");
+            }
+
+            WorkspacePicker cancelled = new WorkspacePicker() {
+                @Override
+                public boolean available() {
+                    return true;
+                }
+
+                @Override
+                public WorkspacePicker.Result pick() {
+                    return WorkspacePicker.Result.cancelled();
+                }
+            };
+            try (LocalWorkbenchServer server = LocalWorkbenchServer.start(state, cancelled)) {
+                HttpResponse<String> response = postWorkspacePicker(server, "{}");
+                equal(200, response.statusCode(), "cancelled picker status");
+                contains(response.body(), "\"status\": \"CANCELLED\"");
+                contains(response.body(), "\"workspacePath\": null");
+            }
+
+            CountDownLatch entered = new CountDownLatch(1);
+            CountDownLatch release = new CountDownLatch(1);
+            WorkspacePicker blocking = new WorkspacePicker() {
+                @Override
+                public boolean available() {
+                    return true;
+                }
+
+                @Override
+                public WorkspacePicker.Result pick() {
+                    entered.countDown();
+                    try {
+                        if (!release.await(5, TimeUnit.SECONDS)) {
+                            return WorkspacePicker.Result.unavailable();
+                        }
+                    } catch (InterruptedException exception) {
+                        Thread.currentThread().interrupt();
+                        return WorkspacePicker.Result.unavailable();
+                    }
+                    return WorkspacePicker.Result.cancelled();
+                }
+            };
+            try (LocalWorkbenchServer server = LocalWorkbenchServer.start(state, blocking)) {
+                CompletableFuture<HttpResponse<String>> first = CompletableFuture.supplyAsync(() -> {
+                    try {
+                        return postWorkspacePicker(server, "{}");
+                    } catch (Exception exception) {
+                        throw new IllegalStateException(exception);
+                    }
+                });
+                check(entered.await(5, TimeUnit.SECONDS), "picker did not open");
+                HttpResponse<String> busy = postWorkspacePicker(server, "{}");
+                equal(409, busy.statusCode(), "busy picker status");
+                contains(busy.body(), "\"status\": \"BUSY\"");
+                release.countDown();
+                equal(200, first.get(5, TimeUnit.SECONDS).statusCode(), "first picker completes");
+            }
+        } finally {
+            deleteOwned(base);
+        }
+    }
+
+    private HttpResponse<String> postWorkspacePicker(LocalWorkbenchServer server, String body)
+            throws Exception {
+        String base = server.baseUri().toString();
+        String origin = base.substring(0, base.length() - 1);
+        HttpRequest request = HttpRequest.newBuilder(
+                server.baseUri().resolve("api/v1/workspaces/pick"))
+                .timeout(Duration.ofSeconds(5))
+                .header("Content-Type", "application/json")
+                .header("Origin", origin)
+                .header("Authorization", "Bearer " + server.sessionToken())
+                .POST(HttpRequest.BodyPublishers.ofString(body)).build();
+        return client.send(request,
+                HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
     }
 
     private void authBoundary() throws Exception {
@@ -743,6 +856,9 @@ public final class LocalWorkbenchHttpTests {
         URI classificationsEndpoint() {
             return server.baseUri().resolve("api/v1/skills/classifications");
         }
+        URI workspacePickerEndpoint() {
+            return server.baseUri().resolve("api/v1/workspaces/pick");
+        }
         HttpResponse<String> postInventory(String body) throws Exception {
             return postInventory(body, server.sessionToken(), origin());
         }
@@ -769,6 +885,16 @@ public final class LocalWorkbenchHttpTests {
         }
         HttpResponse<String> postClassifications(String body) throws Exception {
             HttpRequest request = HttpRequest.newBuilder(classificationsEndpoint())
+                    .timeout(Duration.ofSeconds(5))
+                    .header("Content-Type", "application/json")
+                    .header("Origin", origin())
+                    .header("Authorization", "Bearer " + server.sessionToken())
+                    .POST(HttpRequest.BodyPublishers.ofString(body)).build();
+            return HttpClient.newHttpClient().send(request,
+                    HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        }
+        HttpResponse<String> postWorkspacePicker(String body) throws Exception {
+            HttpRequest request = HttpRequest.newBuilder(workspacePickerEndpoint())
                     .timeout(Duration.ofSeconds(5))
                     .header("Content-Type", "application/json")
                     .header("Origin", origin())

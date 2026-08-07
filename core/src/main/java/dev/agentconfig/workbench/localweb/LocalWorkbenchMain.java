@@ -21,7 +21,7 @@ public final class LocalWorkbenchMain {
     private static void run(Path stateRoot, Path uiRoot) throws IOException, InterruptedException {
         LocalWorkbenchServer server = uiRoot == null
                 ? LocalWorkbenchServer.start(stateRoot)
-                : LocalWorkbenchServer.start(stateRoot, uiRoot);
+                : LocalWorkbenchServer.startDesktop(stateRoot, uiRoot);
         Runtime.getRuntime().addShutdownHook(new Thread(server::close, "acw-loopback-shutdown"));
         System.out.println("Agent Config Workbench loopback API");
         System.out.println("Base URL: " + server.baseUri());

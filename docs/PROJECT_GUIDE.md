@@ -904,7 +904,7 @@ redaction profile + consent scope + retention class
 - 界面采用本地桌面工作台布局：约 220px 的固定左栏承载工作台切换、项目路径、读取动作和当前状态；主区中技能库使用左侧正方形 3×3 分类桶与右侧独立滚动的待整理队列，编辑区继续展示表单、文件差异和应用记录。目标窗口宽度为 1080px 以上，不建设手机端产品面；较窄桌面窗口只提供保持结构的基础回退和横向查看，不再维护手机底部导航、单列重排或隐藏说明。普通界面使用中文产品状态，后端状态码和结果码只放在折叠的“技术详情”中。已有 Skill 会在明确选择后读取：template-v1 只回填字节级结构匹配且可证明的字段；自定义结构默认进入 `SKILL.md` 原文模式，未知正文和结构不经模板重写。切换目标前提示未应用草稿；加载 SHA 是原文 preview 的必填绑定，避免旧编辑覆盖外部新版本。
 - Java 进程同源托管 `ui/dist` 的窄白名单静态资源。启动链接只在 fragment 中携带 token；Vue 读取后立即清除 fragment，并只把 token 保存在页面内存。
 - `scripts/build-ui.sh` 使用 lockfile 安装并构建；`scripts/run-local-web.sh <trusted-state-root>` 编译 Java 并启动页面。Vue/Vite/TypeScript/vue-tsc 是仅限 `ui/` 的必要构建依赖，不进入安全关键 Java 核心。
-- 非模板 `SKILL.md` 原文现可直接编辑、预览和应用；候选只接受与目录同名的最小 `name`/`description` frontmatter、UTF-8/LF、末尾换行和 128 KiB 上限，不解释或执行正文。template-v1 仍无法从运行时正文恢复未持久化的 3+3 路由评测例，因此会要求用户补齐。系统文件夹选择器、可重启恢复入口、桌面壳和安装包仍未完成；关闭/刷新页面后必须使用当前进程打印的新启动链接重新进入。
+- 非模板 `SKILL.md` 原文现可直接编辑、预览和应用；候选只接受与目录同名的最小 `name`/`description` frontmatter、UTF-8/LF、末尾换行和 128 KiB 上限，不解释或执行正文。template-v1 仍无法从运行时正文恢复未持久化的 3+3 路由评测例，因此会要求用户补齐。左栏已接入 Java 21 跨平台目录选择器：选择后只填入绝对路径并复用 inventory；取消、不可用和忙碌分开呈现，手动路径仍是回退。可重启恢复入口、自动打开页面和安装包仍未完成；关闭/刷新页面后必须使用当前进程打印的新启动链接重新进入。
 
 ### Phase 7：Wave 2 preview、可选 AI 和 Prompt Export
 
@@ -939,7 +939,7 @@ redaction profile + consent scope + retention class
 | Gate 4 | 双向转换预览 | canonical Codex root wrapper 纵向切片已验证；能力冻结 | 只有核心闭环验证后才复审通用/反向 renderer |
 | Gate 5 | ChangeSet、快照、事务与恢复 | fixture apply/rollback 进程恢复 + 显式 pending discovery 完成 | 断电持久性、OS 级 CAS/dir-handle-relative 防 TOCTOU、Windows reparse/junction、长期 vault；尚无自动启动恢复 |
 | Gate 6 | 真实工作区 Apply | 部分开放：Codex 单 Skill 创建/更新、真实 Diff、批准与回退已接通；CLI 继续只更新已有目标 | 自动恢复、多文件、跨进程 CAS、Windows reparse 与分发加固 |
-| Gate 7 | UI、Wave 1、GitHub/分发 | 桌面核心单页流程可用：固定左侧工作栏、九类正方形目录与右侧人工队列、inventory、创建/更新、已有内容部分回填、自定义原文受验证编辑、普通表单、真实 Diff/apply/rollback 已接通 typed loopback；GitHub 发布基线完成 | 桌面壳、系统 workspace picker、可下载安装包；恢复与签名在 alpha 验证后按需补齐 |
+| Gate 7 | UI、Wave 1、GitHub/分发 | 桌面核心单页流程可用：紧凑左侧工作栏、Java 目录选择、九类正方形目录与右侧人工队列、inventory、创建/更新、已有内容部分回填、自定义原文受验证编辑、普通表单、真实 Diff/apply/rollback 已接通 typed loopback；GitHub 发布基线完成 | 默认状态目录、自动打开页面、`jpackage` 可下载安装包；恢复与签名在 alpha 验证后按需补齐 |
 
 早期 alpha 的实用安全线固定为：项目路径授权与范围检查、只读发现、Diff、明确批准、stale 绑定、可验证回退和不提交秘密。现有保护不得回退，但断电级持久化、跨进程 CAS、完整 junction/reparse 证明及更多推演性安全研究暂不阻塞桌面入口、目录选择和安装体验；若真实使用出现对应故障，再把它们恢复为活跃 gate。
 
@@ -998,20 +998,20 @@ redaction profile + consent scope + retention class
 Use personal-ai-project-design.
 
 Read AGENTS.md and docs/PROJECT_GUIDE.md in this repository.
-Add read/backfill support for one existing Codex project Skill in the local web entry.
+Package the existing local workbench as the first downloadable jpackage alpha.
 
 Scope:
-- Add a content endpoint that reads only the explicitly selected bounded regular `SKILL.md` after inventory selection.
-- Parse and backfill the ordinary form only for `codex-project-skill-template-v1` canonical content.
-- For non-canonical content, preserve and show the full text in an explicit advanced whole-file replacement path; never pretend the form is lossless.
-- Keep create/update Diff, approval, apply and rollback behavior unchanged.
-- Add fixtures for canonical backfill, non-canonical fallback, malformed UTF-8, stale content and zero writes during read.
-- Keep LLM, supporting-file generation, multi-file changes, Claude, conversion and desktop packaging out of this slice.
+- Produce a runnable Java artifact with the built Vue assets at a stable installed location.
+- Choose a per-user default state directory instead of requiring a terminal argument.
+- Start the loopback server and open its launch URI in the default browser.
+- Keep the current Java workspace picker, token/Origin contract and manual path fallback unchanged.
+- Add a packaging smoke test that verifies startup, runtime capability and static UI without opening a real chooser in CI.
+- Describe the alpha honestly as a desktop launcher plus a local page in the default browser; do not add Electron, JavaFX or another WebView dependency in this slice.
 
 Run scripts/test-core.sh and scripts/run-conformance.sh.
 Before adding a dependency, explain why the JDK/Vue stack is insufficient.
 ```
 
-该切片完成后依次处理可重启恢复入口、系统文件夹选择器和 `jpackage` alpha；不同时启动历史学习、遗传优化、通用转换或更多宿主。
+该切片完成后再根据 alpha 使用反馈处理进程退出、可重启恢复和签名；不同时启动历史学习、遗传优化、通用转换或更多宿主。
 
 详细来源和证据等级见 [RESEARCH_NOTES.md](RESEARCH_NOTES.md)。

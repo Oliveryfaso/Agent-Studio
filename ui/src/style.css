@@ -31,7 +31,7 @@ button { -webkit-tap-highlight-color: transparent; }
 
 .app-frame {
   display: grid;
-  grid-template-columns: 232px minmax(0, 1fr);
+  grid-template-columns: 168px minmax(0, 1fr);
   min-height: 100vh;
 }
 .app-sidebar {
@@ -41,7 +41,7 @@ button { -webkit-tap-highlight-color: transparent; }
   display: flex;
   flex-direction: column;
   gap: 24px;
-  padding: 22px 18px 18px;
+  padding: 18px 12px 14px;
   color: #f7faf8;
   background: #232c27;
   border-right: 1px solid #161c19;
@@ -60,7 +60,9 @@ button { -webkit-tap-highlight-color: transparent; }
 .sidebar-load { width: 100%; min-height: 36px; padding: 0 10px; color: #1f2b24; background: #c9dfb8; font-size: 10px; }
 .sidebar-load:hover:not(:disabled) { background: #d7e9c9; }
 .sidebar-load .spinner { border-color: rgba(31, 43, 36, .25); border-top-color: #1f2b24; }
-.app-sidebar .session { align-self: flex-start; }
+.sidebar-pick { width: 100%; min-height: 34px; padding: 0 9px; color: #dbe4df; background: #2d3832; border: 1px solid #59675f; font-size: 10px; }
+.sidebar-pick:hover:not(:disabled) { color: white; background: #38463e; border-color: #78877f; }
+.app-sidebar .session { width: 100%; align-self: flex-start; padding-inline: 8px; font-size: 10px; }
 
 .brand-mark {
   width: 34px;
@@ -411,8 +413,8 @@ pre:focus-visible { outline: 3px solid #b9d48e; outline-offset: -3px; }
 footer { display: flex; justify-content: space-between; gap: 18px; padding: 18px 2px 0; color: #737b76; font-size: 9px; }
 
 @media (max-width: 1220px) {
-  .app-frame { grid-template-columns: 210px minmax(0, 1fr); }
-  .app-sidebar { padding-inline: 15px; }
+  .app-frame { grid-template-columns: 156px minmax(0, 1fr); }
+  .app-sidebar { padding-inline: 10px; }
   .app-main { padding-inline: 20px; }
   .catalog-board { grid-template-columns: minmax(520px, 1fr) 280px; }
   .bucket-heading small { display: none; }

@@ -22,6 +22,7 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /** Loopback-only transport for the local workbench UI. */
 public final class LocalWorkbenchServer implements AutoCloseable {
@@ -32,28 +33,44 @@ public final class LocalWorkbenchServer implements AutoCloseable {
     private final String token;
     private final String origin;
     private final Optional<Path> uiRoot;
+    private final WorkspacePicker workspacePicker;
+    private final AtomicBoolean workspacePickerBusy = new AtomicBoolean();
 
     private LocalWorkbenchServer(HttpServer server, ExecutorService executor,
-            SkillChangeHttpApi api, String token, Optional<Path> uiRoot) {
+            SkillChangeHttpApi api, String token, Optional<Path> uiRoot,
+            WorkspacePicker workspacePicker) {
         this.server = server;
         this.executor = executor;
         this.api = api;
         this.token = token;
         this.origin = "http://127.0.0.1:" + server.getAddress().getPort();
         this.uiRoot = uiRoot;
+        this.workspacePicker = workspacePicker;
     }
 
     public static LocalWorkbenchServer start(Path suppliedStateRoot) throws IOException {
-        return start(suppliedStateRoot, Optional.empty());
+        return start(suppliedStateRoot, Optional.empty(), disabledPicker());
     }
 
     public static LocalWorkbenchServer start(Path suppliedStateRoot, Path suppliedUiRoot)
             throws IOException {
-        return start(suppliedStateRoot, Optional.of(suppliedUiRoot));
+        return start(suppliedStateRoot, Optional.of(suppliedUiRoot), disabledPicker());
+    }
+
+    public static LocalWorkbenchServer start(Path suppliedStateRoot,
+            WorkspacePicker workspacePicker) throws IOException {
+        return start(suppliedStateRoot, Optional.empty(), workspacePicker);
+    }
+
+    public static LocalWorkbenchServer startDesktop(Path suppliedStateRoot, Path suppliedUiRoot)
+            throws IOException {
+        return start(suppliedStateRoot, Optional.of(suppliedUiRoot),
+                new SwingWorkspacePicker());
     }
 
     private static LocalWorkbenchServer start(Path suppliedStateRoot,
-            Optional<Path> suppliedUiRoot) throws IOException {
+            Optional<Path> suppliedUiRoot, WorkspacePicker workspacePicker) throws IOException {
+        if (workspacePicker == null) throw new IllegalArgumentException("workspacePicker");
         Path stateRoot = suppliedStateRoot.toAbsolutePath().normalize();
         if (Files.isSymbolicLink(stateRoot)) throw new IOException("state root link");
         stateRoot = stateRoot.toRealPath();
@@ -78,8 +95,10 @@ public final class LocalWorkbenchServer implements AutoCloseable {
             uiRoot = Optional.of(candidate);
         }
         LocalWorkbenchServer workbench = new LocalWorkbenchServer(server, executor,
-                new SkillChangeHttpApi(stateRoot), HexFormat.of().formatHex(tokenBytes), uiRoot);
+                new SkillChangeHttpApi(stateRoot), HexFormat.of().formatHex(tokenBytes), uiRoot,
+                workspacePicker);
         server.createContext("/api/v1/runtime", workbench::runtime);
+        server.createContext("/api/v1/workspaces/pick", workbench.post(workbench::pickWorkspace));
         server.createContext("/api/v1/skills/inventory",
                 workbench.post(workbench.api::inventory));
         server.createContext("/api/v1/skills/content",
@@ -184,10 +203,60 @@ public final class LocalWorkbenchServer implements AutoCloseable {
         }
         send(exchange, 200, "{\n  \"schemaVersion\": 1,\n  \"status\": \"READY\",\n"
                 + "  \"productVersion\": \"0.1.0-lab\",\n"
+                + "  \"desktopCapabilities\": {\"workspacePicker\": "
+                + workspacePicker.available() + "},\n"
                 + "  \"capabilities\": [{\"hostId\": \"codex\","
                 + " \"skillInventory\": true, \"skillContentRead\": true, \"skillCreate\": true,"
                 + " \"existingSkillReplace\": true, \"rawSkillEdit\": true,"
                 + " \"skillClassification\": true}]\n}");
+    }
+
+    private SkillChangeHttpApi.ApiResponse pickWorkspace(Map<String, Object> request,
+            String requestId) {
+        if (!request.isEmpty()) {
+            return SkillChangeHttpApi.error(400, requestId, "INPUT_INVALID", false);
+        }
+        if (!workspacePicker.available()) {
+            return pickerResponse(requestId, WorkspacePicker.Status.UNAVAILABLE, null);
+        }
+        if (!workspacePickerBusy.compareAndSet(false, true)) {
+            return new SkillChangeHttpApi.ApiResponse(409, "{\n  \"schemaVersion\": 1,\n"
+                    + "  \"requestId\": " + SkillChangeHttpApi.json(requestId) + ",\n"
+                    + "  \"command\": \"workspace-pick\",\n"
+                    + "  \"status\": \"BUSY\",\n  \"workspacePath\": null\n}");
+        }
+        try {
+            WorkspacePicker.Result result = workspacePicker.pick();
+            String selected = result.selectedDirectory() == null ? null
+                    : result.selectedDirectory().toString();
+            return pickerResponse(requestId, result.status(), selected);
+        } finally {
+            workspacePickerBusy.set(false);
+        }
+    }
+
+    private static SkillChangeHttpApi.ApiResponse pickerResponse(String requestId,
+            WorkspacePicker.Status status, String selected) {
+        return new SkillChangeHttpApi.ApiResponse(200, "{\n  \"schemaVersion\": 1,\n"
+                + "  \"requestId\": " + SkillChangeHttpApi.json(requestId) + ",\n"
+                + "  \"command\": \"workspace-pick\",\n"
+                + "  \"status\": " + SkillChangeHttpApi.json(status.name()) + ",\n"
+                + "  \"workspacePath\": "
+                + (selected == null ? "null" : SkillChangeHttpApi.json(selected)) + "\n}");
+    }
+
+    private static WorkspacePicker disabledPicker() {
+        return new WorkspacePicker() {
+            @Override
+            public boolean available() {
+                return false;
+            }
+
+            @Override
+            public Result pick() {
+                return Result.unavailable();
+            }
+        };
     }
 
     private void staticOrNotFound(HttpExchange exchange) throws IOException {

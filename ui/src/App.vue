@@ -135,6 +135,11 @@ interface RollbackResponse extends ApiErrorBody {
   detail: string
 }
 
+interface WorkspacePickerResponse extends ApiErrorBody {
+  status: 'SELECTED' | 'CANCELLED' | 'UNAVAILABLE' | 'BUSY'
+  workspacePath: string | null
+}
+
 interface RollbackAnchor {
   transactionId: string
   workspacePath: string
@@ -145,6 +150,8 @@ interface RollbackAnchor {
 const sessionToken = ref(readAndForgetToken())
 const activeView = ref<'library' | 'editor'>('library')
 const workspacePath = ref('')
+const workspacePickerPhase = ref<'idle' | 'picking'>('idle')
+const workspacePickerNotice = ref('')
 const inventoryPhase = ref<'idle' | 'loading' | 'ready' | 'error'>('idle')
 const skillInventory = ref<SkillInventoryResponse | null>(null)
 const inventoryWorkspace = ref('')
@@ -358,6 +365,36 @@ async function importCatalogSkills(): Promise<void> {
 async function loadActiveWorkspace(): Promise<void> {
   if (activeView.value === 'library') await importCatalogSkills()
   else await loadSkillInventory()
+}
+
+async function pickWorkspaceDirectory(): Promise<void> {
+  if (!sessionToken.value || workspacePickerPhase.value === 'picking') return
+  workspacePickerPhase.value = 'picking'
+  workspacePickerNotice.value = '请在弹出的窗口中选择项目文件夹。'
+  try {
+    const result = await post<WorkspacePickerResponse>('workspaces/pick', {})
+    if (result.status === 'SELECTED' && result.workspacePath) {
+      workspacePath.value = result.workspacePath
+      await nextTick()
+      workspacePickerNotice.value = '已选择项目，正在读取 Skill…'
+      await loadActiveWorkspace()
+      workspacePickerNotice.value = inventoryPhase.value === 'ready'
+        ? '项目已读取；两个工作台共用。'
+        : inventoryError.value || '项目已选择，请重新读取。'
+    } else if (result.status === 'CANCELLED') {
+      workspacePickerNotice.value = '已取消选择，当前路径没有改变。'
+    } else if (result.status === 'BUSY') {
+      workspacePickerNotice.value = '文件夹选择窗口已经打开。'
+    } else {
+      workspacePickerNotice.value = '当前环境不能打开选择窗口，也可以直接输入路径。'
+    }
+  } catch (error) {
+    workspacePickerNotice.value = error instanceof Error && error.message === 'SESSION_TOKEN_INVALID'
+      ? '连接已失效，请重新打开启动链接。'
+      : '没有打开选择窗口，也可以直接输入路径。'
+  } finally {
+    workspacePickerPhase.value = 'idle'
+  }
 }
 
 async function classifyCatalogSkills(): Promise<void> {
@@ -971,12 +1008,16 @@ function rawValidationLabel(code: string): string {
 
         <section class="sidebar-workspace" aria-labelledby="sidebar-workspace-title">
           <span id="sidebar-workspace-title">当前项目</span>
-          <input v-model="workspacePath" type="text" maxlength="4096" autocomplete="off" spellcheck="false" placeholder="/Users/you/code/my-project" :disabled="busy || inventoryPhase === 'loading' || taxonomyPhase === 'classifying'" @keydown.enter.prevent="loadActiveWorkspace" />
-          <button class="sidebar-load" type="button" :disabled="!canLoadInventory || busy || taxonomyPhase === 'classifying'" @click="loadActiveWorkspace">
-            <span v-if="inventoryPhase === 'loading'" class="spinner" aria-hidden="true" />
-            {{ inventoryPhase === 'loading' ? '正在读取…' : inventoryPhase === 'error' ? '重新读取' : activeView === 'library' ? '导入本地 Skill' : '读取项目 Skill' }}
+          <input v-model="workspacePath" type="text" maxlength="4096" autocomplete="off" spellcheck="false" placeholder="/项目/绝对路径" :title="workspacePath" :disabled="busy || workspacePickerPhase === 'picking' || inventoryPhase === 'loading' || taxonomyPhase === 'classifying'" @keydown.enter.prevent="loadActiveWorkspace" />
+          <button class="sidebar-pick" type="button" :disabled="busy || workspacePickerPhase === 'picking' || inventoryPhase === 'loading' || taxonomyPhase === 'classifying'" @click="pickWorkspaceDirectory">
+            <span v-if="workspacePickerPhase === 'picking'" class="spinner" aria-hidden="true" />
+            {{ workspacePickerPhase === 'picking' ? '等待选择…' : '选择文件夹' }}
           </button>
-          <small>读取项目内 .agents/skills；路径会在两个工作台间保持。</small>
+          <button class="sidebar-load" type="button" :disabled="!canLoadInventory || busy || workspacePickerPhase === 'picking' || taxonomyPhase === 'classifying'" @click="loadActiveWorkspace">
+            <span v-if="inventoryPhase === 'loading'" class="spinner" aria-hidden="true" />
+            {{ inventoryPhase === 'loading' ? '正在读取…' : inventoryPhase === 'error' ? '重新读取' : activeView === 'library' ? '导入 Skill' : '读取 Skill' }}
+          </button>
+          <small>{{ workspacePickerNotice || '读取 .agents/skills；两个工作台共用。' }}</small>
         </section>
 
         <div class="sidebar-spacer" />

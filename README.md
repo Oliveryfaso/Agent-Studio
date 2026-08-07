@@ -4,7 +4,7 @@ GitHub: [Oliveryfaso/Agent-Studio](https://github.com/Oliveryfaso/Agent-Studio)
 
 Agent Config Workbench（智能体配置工作台）的长期目标，是在 Codex、Claude Code 和主流 vibe-coding 工具之间管理、生成、转换并安全应用 instructions、skills、rules 和 agents。当前实施刻意收敛为 Codex-first 的 `Inspect → Draft → Diff/Export → Simple Apply/Rollback` 单资产闭环；其他宿主、通用转换、GitHub、Router 和历史演化在核心用户价值验证前保持冻结。
 
-当前状态：**实验室原型，Codex-first 单资产闭环已有可操作的本地 Vue 页面**。Java 21 治理内核可在用户明确指定的普通项目中创建第一个 Codex project Skill，或更新一个已存在的 Skill；标准模板使用结构化表单，自定义 Skill 可直接编辑受验证的 `SKILL.md` 原文，随后执行 `preview → approve/apply → rollback`。新增的“技能库”会把项目 Skill 按九类确定性整理，无法可靠判断的条目进入人工队列；分类和人工调整都不改文件。同源 Vue 3 页面显示技能分类、真实目标、完整 Diff、批准状态和事务回执。它仍不保证断电恢复、跨进程并发 CAS 或完整 Windows reparse 防护，因此 Gate 6 仍部分开放；Gate 7 已进入“核心单页流程可用”，还不是可分发桌面产品。
+当前状态：**实验室原型，Codex-first 单资产闭环已有可操作的本地 Vue 页面**。Java 21 治理内核可在用户明确指定的普通项目中创建第一个 Codex project Skill，或更新一个已存在的 Skill；标准模板使用结构化表单，自定义 Skill 可直接编辑受验证的 `SKILL.md` 原文，随后执行 `preview → approve/apply → rollback`。新增的“技能库”会把项目 Skill 按九类确定性整理，无法可靠判断的条目进入人工队列；分类和人工调整都不改文件。桌面入口可以通过 Java 目录选择窗口取得项目绝对路径，也保留手动输入作为无桌面环境回退。同源 Vue 3 页面显示技能分类、真实目标、完整 Diff、批准状态和事务回执。它仍不保证断电恢复、跨进程并发 CAS 或完整 Windows reparse 防护，因此 Gate 6 仍部分开放；Gate 7 已进入“核心单页流程可用”，还不是可分发桌面产品。
 
 ## 当前产品焦点
 
@@ -65,7 +65,8 @@ Claude Code 与其他宿主仍保留在长期路线中；现有 conversion、Git
 - `skill-change-preview/apply/rollback` 是首个真实工作区入口，只处理一个 Codex project Skill。更新模式绑定真实 preimage 与 Diff；创建模式绑定目标不存在状态、操作类型和缺失父目录。两者都要求显式 approval token，并把事务状态放入 workspace 外的可信 state root。更新 rollback 恢复 byte-exact snapshot；创建 rollback 只在 identity/hash/权限未变化时删除本次文件，并只清理本事务创建且仍为空的目录。
 - Vue 3 + TypeScript 页面分为“技能库”和“编辑与应用”。固定左侧工作栏统一承载工作台切换、项目路径和当前状态；技能库主体使用左侧正方形 3×3 分类桶与右侧独立滚动的待整理队列，提供轻量投放动画、分类计数、拖拽/原生选择器两种人工归类方式和 Skill 详情。产品以宽度至少 1080px 的桌面窗口为目标，不再维护手机专用导航或重排界面；较窄桌面窗口只保证内容完整与可横向查看。人工覆盖只绑定本次会话的逻辑路径与 source SHA。编辑区覆盖 `更新已有 / 新建 Skill`、中文表单、受验证原文编辑、真实 Diff、明确批准、apply receipt 与 guarded rollback。选择已有 Skill 后，受限 content endpoint 会读取明确选中的 `SKILL.md`：template-v1 只回填可证明的字段，并要求用户补齐运行时文件未保存的 3+3 路由测试例；自定义结构进入原文模式，保留未知正文与结构，经过 `codex-raw-skill-static-v1` 的路径、UTF-8/LF、128 KiB 和最小 frontmatter 检查后整体替换。加载时的 source SHA 是原文 preview 的必填绑定，文件若在读取后发生变化即拒绝继续；切换目标前会提示未应用草稿。空项目直接进入创建模式；创建后列表自动刷新，撤销后恢复为空项目状态。`BLOCKED`、`NO_CHANGE`、`STALE`、`CURRENT_TARGET_CHANGED`、`RECOVERY_REQUIRED` 与网络错误分开呈现。启动 token 通过 URL fragment 交付，页面读取后立刻从地址栏删除并只保留在内存。
 - Java 同源静态资源服务只允许构建产物中的 `index.html`、hash asset 与 favicon，带 CSP/no-store/nosniff 等响应头；仍只绑定 loopback，state root 仍由启动参数固定。
-- Ubuntu、macOS、Windows 三平台 CI 基线已真实通过并持续复验；当前本地 300 项 Java 测试用例全部通过，其中版本化 conformance 为 27 项。每次变更仍以对应远端 CI run 为合并依据。
+- `POST /api/v1/workspaces/pick` 通过同一 token/Origin 边界调用可注入的桌面目录选择器；本地页面使用 Java 21 `JFileChooser(DIRECTORIES_ONLY)`，选择后只回填项目路径并复用现有 inventory。取消、不可用和已有窗口忙碌状态分开返回；headless/CI 使用 fake 或明确 `UNAVAILABLE`，不会弹真实窗口。
+- Ubuntu、macOS、Windows 三平台 CI 基线已真实通过并持续复验；当前本地 301 项 Java 测试用例全部通过，其中版本化 conformance 为 27 项。每次变更仍以对应远端 CI run 为合并依据。
 
 需要 JDK 21；本地 UI 构建还需要 Node.js/npm。Java 核心仍不依赖 Gradle、Maven 或第三方库；Vue 3、Vite、TypeScript 与 vue-tsc 只存在于 `ui/`，用于浏览器交互和静态构建：
 
@@ -155,4 +156,4 @@ risk: LOW
 
 ## 下一里程碑
 
-创建、读取、分类和更新 Codex project Skill 的首个桌面 Vue 闭环已经开放，非模板 Skill 也能以受验证原文候选经过精确 Diff 后整体编辑。下一步优先实现桌面壳中的系统 workspace 选择与 `jpackage` 可下载 alpha；分类持久化、可配置词表和可选 LLM 建议器留在真实用户反馈之后，不同时扩建其他宿主、Router 或历史演化。现有路径限制、零写入预览、精确 Diff、明确批准、stale 检查和回退继续保留；在出现真实故障证据前，不再把断电级持久化、跨进程 CAS 或额外平台安全研究作为早期产品开发的前置条件。
+创建、读取、分类和更新 Codex project Skill 的首个桌面 Vue 闭环已经开放，非模板 Skill 也能以受验证原文候选经过精确 Diff 后整体编辑；系统目录选择已接入。下一步制作 `jpackage` 可下载 alpha：提供默认应用状态目录、稳定定位 Vue 资源、启动后自动打开本地页面，并明确它是“桌面启动器 + 默认浏览器中的本地页面”，不是内嵌 WebView。分类持久化、可配置词表和可选 LLM 建议器留在真实用户反馈之后，不同时扩建其他宿主、Router 或历史演化。现有路径限制、零写入预览、精确 Diff、明确批准、stale 检查和回退继续保留。

@@ -380,6 +380,15 @@
 - 安全取舍：保留当前已经进入核心链的项目范围检查、惰性读取、零写入预览、Diff、明确批准、stale 检查和回退。断电级 fsync、跨进程 CAS、完整 junction/reparse 证明与其他推演性加固停止占用近期产品路线，除非真实用户故障或分发要求重新触发。
 - 下一步：优先把左栏项目路径替换为桌面壳的系统文件夹选择，再验证 `jpackage` 安装 alpha；不在浏览器中伪造无法得到绝对路径的文件夹选择体验。
 
+## ADR-044：首个目录选择入口使用 Java Swing，并与桌面打包分步交付
+
+- 日期：2026-08-07
+- 状态：接受（alpha 入口）
+- 决定：在现有 Java loopback 服务中增加可注入的 `WorkspacePicker`，生产实现使用 JDK 21 自带的 `JFileChooser(DIRECTORIES_ONLY)`，通过已有 Host、Origin 和进程 token 保护的 `POST /api/v1/workspaces/pick` 调用。Vue 只接收选择结果、填入左栏路径并进入既有 inventory，不建立新的文件读取旁路。
+- 状态合同：返回 `SELECTED`、`CANCELLED`、`UNAVAILABLE` 或 `BUSY`；同一时间只允许一个窗口。Swing 调用统一进入 EDT，headless/CI 不创建窗口并使用 fake picker 验证协议。手动输入绝对路径继续作为开发与不可用环境的回退。
+- 取舍：该选择器跨平台且零新增依赖，但不宣称是每个操作系统 100% 原生面板。`jpackage` 只提供 launcher/runtime，不提供内嵌 WebView；首个安装 alpha 将使用默认浏览器中的本地页面。只有真实用户明确需要独立窗口时，才重新评估 JavaFX、Electron 或其他薄壳。
+- 下一步：独立实现默认用户状态目录、Vue 资源随包定位、自动打开 launch URI 和 `jpackage` smoke test，不在本切片同步引入安装/签名复杂度。
+
 ## 待决问题
 
 - [ ] 为正式工程选择 Java 构建工具与最小模块骨架；当前纯 JDK 脚本仅服务 Phase 1 spike。
