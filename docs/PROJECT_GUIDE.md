@@ -901,7 +901,7 @@ redaction profile + consent scope + retention class
 - `/api/v1/runtime`、`skills/inventory` 与 `skill-changes/preview|apply|rollback` 返回 typed HTTP schema v1；HTTP controller 直接调用既有 Inventory、Blueprint、Draft 与 Controlled service，不启动子进程、不解析 CLI stdout。Inventory core 仍保留自己的 schema v2，不与 HTTP envelope 混称。
 - mutation endpoint 同时校验精确 Host、同源 Origin 和 256-bit 进程期 bearer token，不发送宽泛 CORS。请求总预算为 320 KiB，原文候选另有 128 KiB 字节预算；严格 UTF-8/flat JSON 与稳定 error envelope 已进入 fixture。
 - Vue 3 + TypeScript 单页现已完成 workspace/Skill inventory、显式创建或更新模式、普通 Skill 表单、真实 Diff、确认、apply receipt 与 rollback；空项目直接进入创建模式，预览列出缺失目录，创建/撤销后自动刷新列表。操作模式与输入变化都会废弃旧 preview/approval，并明确显示 empty/partial/error/blocked/no-change/stale/current-target-changed/recovery/network 状态。
-- 界面采用本地桌面工作台布局：桌面端左侧选择操作、目标与内容，右侧查看状态、文件差异和应用记录；窄屏退回单列。普通界面使用中文产品状态，后端状态码和结果码只放在折叠的“技术详情”中。已有 Skill 会在明确选择后读取：template-v1 只回填字节级结构匹配且可证明的字段；自定义结构默认进入 `SKILL.md` 原文模式，未知正文和结构不经模板重写。切换目标前提示未应用草稿；加载 SHA 是原文 preview 的必填绑定，避免旧编辑覆盖外部新版本。
+- 界面采用本地桌面工作台布局：约 220px 的固定左栏承载工作台切换、项目路径、读取动作和当前状态；主区中技能库使用左侧正方形 3×3 分类桶与右侧独立滚动的待整理队列，编辑区继续展示表单、文件差异和应用记录。目标窗口宽度为 1080px 以上，不建设手机端产品面；较窄桌面窗口只提供保持结构的基础回退和横向查看，不再维护手机底部导航、单列重排或隐藏说明。普通界面使用中文产品状态，后端状态码和结果码只放在折叠的“技术详情”中。已有 Skill 会在明确选择后读取：template-v1 只回填字节级结构匹配且可证明的字段；自定义结构默认进入 `SKILL.md` 原文模式，未知正文和结构不经模板重写。切换目标前提示未应用草稿；加载 SHA 是原文 preview 的必填绑定，避免旧编辑覆盖外部新版本。
 - Java 进程同源托管 `ui/dist` 的窄白名单静态资源。启动链接只在 fragment 中携带 token；Vue 读取后立即清除 fragment，并只把 token 保存在页面内存。
 - `scripts/build-ui.sh` 使用 lockfile 安装并构建；`scripts/run-local-web.sh <trusted-state-root>` 编译 Java 并启动页面。Vue/Vite/TypeScript/vue-tsc 是仅限 `ui/` 的必要构建依赖，不进入安全关键 Java 核心。
 - 非模板 `SKILL.md` 原文现可直接编辑、预览和应用；候选只接受与目录同名的最小 `name`/`description` frontmatter、UTF-8/LF、末尾换行和 128 KiB 上限，不解释或执行正文。template-v1 仍无法从运行时正文恢复未持久化的 3+3 路由评测例，因此会要求用户补齐。系统文件夹选择器、可重启恢复入口、桌面壳和安装包仍未完成；关闭/刷新页面后必须使用当前进程打印的新启动链接重新进入。
@@ -939,9 +939,13 @@ redaction profile + consent scope + retention class
 | Gate 4 | 双向转换预览 | canonical Codex root wrapper 纵向切片已验证；能力冻结 | 只有核心闭环验证后才复审通用/反向 renderer |
 | Gate 5 | ChangeSet、快照、事务与恢复 | fixture apply/rollback 进程恢复 + 显式 pending discovery 完成 | 断电持久性、OS 级 CAS/dir-handle-relative 防 TOCTOU、Windows reparse/junction、长期 vault；尚无自动启动恢复 |
 | Gate 6 | 真实工作区 Apply | 部分开放：Codex 单 Skill 创建/更新、真实 Diff、批准与回退已接通；CLI 继续只更新已有目标 | 自动恢复、多文件、跨进程 CAS、Windows reparse 与分发加固 |
-| Gate 7 | UI、Wave 1、GitHub/分发 | 核心单页流程可用：inventory、创建/更新、已有内容部分回填、自定义原文受验证编辑、普通表单、真实 Diff/apply/rollback 已接通 typed loopback；GitHub 发布基线完成 | 系统 workspace picker、可重启恢复、桌面安装包、签名/SBOM |
+| Gate 7 | UI、Wave 1、GitHub/分发 | 桌面核心单页流程可用：固定左侧工作栏、九类正方形目录与右侧人工队列、inventory、创建/更新、已有内容部分回填、自定义原文受验证编辑、普通表单、真实 Diff/apply/rollback 已接通 typed loopback；GitHub 发布基线完成 | 桌面壳、系统 workspace picker、可下载安装包；恢复与签名在 alpha 验证后按需补齐 |
 
-## 18. MVP 发布门槛
+早期 alpha 的实用安全线固定为：项目路径授权与范围检查、只读发现、Diff、明确批准、stale 绑定、可验证回退和不提交秘密。现有保护不得回退，但断电级持久化、跨进程 CAS、完整 junction/reparse 证明及更多推演性安全研究暂不阻塞桌面入口、目录选择和安装体验；若真实使用出现对应故障，再把它们恢复为活跃 gate。
+
+## 18. 正式版产品化门槛
+
+当前可下载 alpha 只执行上一节定义的实用安全线，并要求桌面壳能选择项目、完成 Skill 导入/分类/查看/编辑/预览/应用/回退主旅程。以下项目是正式版产品化门槛，不阻塞早期 alpha 的可用性验证。
 
 - 所有安全不变量有自动化测试。
 - 启动时能恢复或清晰隔离未完成事务。

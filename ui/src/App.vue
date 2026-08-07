@@ -355,6 +355,11 @@ async function importCatalogSkills(): Promise<void> {
   await loadSkillInventory()
 }
 
+async function loadActiveWorkspace(): Promise<void> {
+  if (activeView.value === 'library') await importCatalogSkills()
+  else await loadSkillInventory()
+}
+
 async function classifyCatalogSkills(): Promise<void> {
   if (!skillInventory.value || inventoryPhase.value !== 'ready') return
   taxonomyPhase.value = 'classifying'
@@ -391,6 +396,10 @@ async function closeCatalogDetail(): Promise<void> {
 
 function startCatalogDrag(name: string): void {
   draggedCatalogSkillName.value = name
+}
+
+function finishCatalogDrag(): void {
+  draggedCatalogSkillName.value = ''
 }
 
 function assignCatalogSkill(name: string, category: CategoryId): void {
@@ -947,21 +956,35 @@ function rawValidationLabel(code: string): string {
 
 <template>
   <main class="shell">
-    <header class="app-header">
-      <div class="brand-mark" aria-hidden="true">AS</div>
-      <div class="app-title">
-        <strong>Agent Studio</strong>
-        <span>Skills 管理工作台</span>
-      </div>
-      <span class="session" :class="{ missing: !sessionToken }">
-        <span class="session-dot" />{{ sessionToken ? '服务已连接' : '服务未连接' }}
-      </span>
-    </header>
+    <div class="app-frame">
+      <aside class="app-sidebar">
+        <div class="sidebar-brand">
+          <div class="brand-mark" aria-hidden="true">AS</div>
+          <div class="app-title"><strong>Agent Studio</strong><span>Skills 管理工作台</span></div>
+        </div>
 
-    <nav class="primary-nav" aria-label="主要工作区">
-      <button type="button" :class="{ active: activeView === 'library' }" @click="activeView = 'library'">技能库</button>
-      <button type="button" :class="{ active: activeView === 'editor' }" @click="activeView = 'editor'">编辑与应用</button>
-    </nav>
+        <nav class="primary-nav" aria-label="主要工作区">
+          <span>工作台</span>
+          <button type="button" :class="{ active: activeView === 'library' }" @click="activeView = 'library'">技能库</button>
+          <button type="button" :class="{ active: activeView === 'editor' }" @click="activeView = 'editor'">编辑与应用</button>
+        </nav>
+
+        <section class="sidebar-workspace" aria-labelledby="sidebar-workspace-title">
+          <span id="sidebar-workspace-title">当前项目</span>
+          <input v-model="workspacePath" type="text" maxlength="4096" autocomplete="off" spellcheck="false" placeholder="/Users/you/code/my-project" :disabled="busy || inventoryPhase === 'loading' || taxonomyPhase === 'classifying'" @keydown.enter.prevent="loadActiveWorkspace" />
+          <button class="sidebar-load" type="button" :disabled="!canLoadInventory || busy || taxonomyPhase === 'classifying'" @click="loadActiveWorkspace">
+            <span v-if="inventoryPhase === 'loading'" class="spinner" aria-hidden="true" />
+            {{ inventoryPhase === 'loading' ? '正在读取…' : inventoryPhase === 'error' ? '重新读取' : activeView === 'library' ? '导入本地 Skill' : '读取项目 Skill' }}
+          </button>
+          <small>读取项目内 .agents/skills；路径会在两个工作台间保持。</small>
+        </section>
+
+        <div class="sidebar-spacer" />
+        <span class="session" :class="{ missing: !sessionToken }"><span class="session-dot" />{{ sessionToken ? '本机服务已连接' : '服务未连接' }}</span>
+        <small class="sidebar-note">本机运行 · 每次修改一个 Skill</small>
+      </aside>
+
+      <div class="app-main">
 
     <section v-if="activeView === 'library'" class="catalog-view" aria-labelledby="catalog-title">
       <div class="panel catalog-hero">
@@ -969,17 +992,6 @@ function rawValidationLabel(code: string): string {
           <span class="eyebrow">本地 Skills</span>
           <h1 id="catalog-title">把零散技能放回合适的位置</h1>
           <p>先读取项目，再用可解释规则整理为九类。证据不足的 Skill 留给你确认，不会强行归类。</p>
-        </div>
-        <div class="catalog-import">
-          <label for="catalog-workspace">项目文件夹</label>
-          <div class="workspace-input-row">
-            <input id="catalog-workspace" v-model="workspacePath" type="text" maxlength="4096" autocomplete="off" spellcheck="false" placeholder="/Users/you/code/my-project" :disabled="inventoryPhase === 'loading' || taxonomyPhase === 'classifying'" @keydown.enter.prevent="importCatalogSkills" />
-            <button class="secondary compact-button" type="button" :disabled="!canLoadInventory || taxonomyPhase === 'classifying'" @click="importCatalogSkills">
-              <span v-if="inventoryPhase === 'loading'" class="spinner" aria-hidden="true" />
-              {{ inventoryPhase === 'loading' ? '正在读取…' : '导入本地 Skill' }}
-            </button>
-          </div>
-          <small>只读取项目内 .agents/skills，不执行任何 Skill 内容。</small>
         </div>
       </div>
 
@@ -1019,7 +1031,9 @@ function rawValidationLabel(code: string): string {
             <small v-if="skillInventory.skills.length > 12">其余 {{ skillInventory.skills.length - 12 }} 个一并整理</small>
           </div>
 
-          <div class="bucket-grid" :class="{ sorting: taxonomyPhase === 'sorting' }" aria-label="九类 Skill">
+          <div class="catalog-board">
+            <div class="taxonomy-area">
+              <div class="bucket-grid" :class="{ sorting: taxonomyPhase === 'sorting' }" aria-label="九类 Skill">
             <article v-for="category in taxonomyCategories" :key="category.id" class="skill-bucket" :class="{ selected: selectedBucket === category.id }" @dragover.prevent @drop="dropCatalogSkill(category.id)">
               <button class="bucket-heading" type="button" :aria-expanded="selectedBucket === category.id" @click="selectedBucket = selectedBucket === category.id ? null : category.id">
                 <span class="bucket-mark" aria-hidden="true">{{ category.mark }}</span>
@@ -1032,24 +1046,24 @@ function rawValidationLabel(code: string): string {
                 </button>
                 <span v-if="skillsInCategory(category.id).length === 0" class="bucket-empty">等待 Skill</span>
                 <span v-if="skillsInCategory(category.id).length > 4" class="bucket-more desktop-more">另有 {{ skillsInCategory(category.id).length - 4 }} 个</span>
-                <span v-if="skillsInCategory(category.id).length > 1" class="bucket-more mobile-more">另有 {{ skillsInCategory(category.id).length - 1 }} 个</span>
               </div>
             </article>
-          </div>
+              </div>
 
-          <section v-if="selectedBucket" class="bucket-browser" aria-live="polite">
+              <section v-if="selectedBucket" class="bucket-browser" aria-live="polite">
             <div><span class="bucket-mark" aria-hidden="true">{{ taxonomyCategory(selectedBucket).mark }}</span><strong>{{ taxonomyCategory(selectedBucket).name }}</strong><small>共 {{ skillsInCategory(selectedBucket).length }} 个 Skill</small></div>
             <button v-for="skill in skillsInCategory(selectedBucket)" :key="skill.logicalPath" type="button" @click="chooseCatalogSkill(skill.name, $event)">{{ skill.name }}</button>
             <span v-if="skillsInCategory(selectedBucket).length === 0">这个分类暂时为空。</span>
-          </section>
+              </section>
+            </div>
 
           <section v-if="taxonomyReport" class="review-queue" aria-labelledby="review-queue-title">
             <div class="review-heading">
-              <div><span class="eyebrow">需要你判断</span><h2 id="review-queue-title">待整理</h2><p>桌面端可拖进上方分类；触屏和键盘可使用下拉选择。</p></div>
+              <div><span class="eyebrow">需要你判断</span><h2 id="review-queue-title">待整理</h2><p>拖进左侧分类桶，或直接从列表中选择分类。</p></div>
               <strong>{{ unclassifiedCatalogSkills.length }}</strong>
             </div>
             <div v-if="unclassifiedCatalogSkills.length" class="review-list">
-              <div v-for="skill in unclassifiedCatalogSkills" :key="skill.logicalPath" class="review-skill" draggable="true" @dragstart="startCatalogDrag(skill.name)">
+              <div v-for="skill in unclassifiedCatalogSkills" :key="skill.logicalPath" class="review-skill" draggable="true" @dragstart="startCatalogDrag(skill.name)" @dragend="finishCatalogDrag">
                 <span class="drag-handle" aria-hidden="true">⋮⋮</span>
                 <button class="review-skill-name" type="button" @click="chooseCatalogSkill(skill.name, $event)"><strong>{{ skill.name }}</strong><small>规则证据不足，本次未自动归类</small></button>
                 <select aria-label="人工选择分类" @click.stop @change="assignCatalogSkillFromSelect(skill.name, $event)">
@@ -1060,6 +1074,10 @@ function rawValidationLabel(code: string): string {
             </div>
             <p v-else class="queue-complete">所有 Skill 都已有分类。你仍可在详情中调整本次结果。</p>
           </section>
+          <aside v-else class="review-queue review-awaiting">
+            <span class="eyebrow">待整理</span><h2>尚未分类</h2><p>运行分类后，证据不足的 Skill 会集中出现在这里。</p>
+          </aside>
+          </div>
 
           <aside v-if="selectedCatalogSkill" ref="catalogDetailElement" class="catalog-detail" role="dialog" aria-modal="false" aria-labelledby="catalog-detail-title" tabindex="-1" @keydown.esc.prevent="closeCatalogDetail">
             <button class="detail-close" type="button" aria-label="关闭详情" @click="closeCatalogDetail">×</button>
@@ -1102,15 +1120,8 @@ function rawValidationLabel(code: string): string {
 
         <div class="field-grid">
           <div class="field">
-            <label for="workspace-path">项目文件夹</label>
-            <div class="workspace-input-row">
-              <input id="workspace-path" v-model="workspacePath" type="text" maxlength="4096" autocomplete="off" spellcheck="false" placeholder="/Users/you/code/my-project" :disabled="busy" @keydown.enter.prevent="loadSkillInventory" />
-              <button class="secondary compact-button" type="button" :disabled="!canLoadInventory || busy" @click="loadSkillInventory">
-                <span v-if="inventoryPhase === 'loading'" class="spinner" aria-hidden="true" />
-                {{ inventoryPhase === 'loading' ? '正在读取…' : inventoryPhase === 'error' ? '重试' : '读取 Skill' }}
-              </button>
-            </div>
-            <small>支持创建或更新一个 .agents/skills/&lt;名称&gt;/SKILL.md</small>
+            <label>项目中的 Skill</label>
+            <small>项目路径和读取按钮已经移到左侧；这里选择要创建或更新的文件。</small>
 
             <div v-if="inventoryPhase !== 'idle'" class="skill-picker" :class="inventoryPhase" :aria-busy="inventoryPhase === 'loading'">
               <p v-if="inventoryPhase === 'loading'">正在读取项目中的 Skill…</p>
@@ -1369,6 +1380,8 @@ function rawValidationLabel(code: string): string {
       </div>
     </div>
 
-    <footer><span>Agent Studio</span><span>仅连接本机 · 每次修改一个 Skill</span></footer>
+        <footer><span>Agent Studio</span><span>仅连接本机 · 每次修改一个 Skill</span></footer>
+      </div>
+    </div>
   </main>
 </template>

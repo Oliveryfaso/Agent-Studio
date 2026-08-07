@@ -418,3 +418,10 @@
 - loopback 新增 `POST /api/v1/skills/classifications`，只投影 category、confidence、score、margin 和 NAME/DESCRIPTION 证据来源，不回传正文或 description。分类读取复用 inventory 选择与 NOFOLLOW/containment/size/hash 检查，不读取 supporting files。
 - Vue 增加独立“技能库”入口：导入后显示 3×3 固定分类桶，分类时做轻量错峰投放动画；未分类项进入“待整理”，桌面可拖拽，触屏和键盘可用原生选择器。详情可进入原有编辑流程；人工分类只保存在当前会话并绑定逻辑路径与 source SHA，不改动 Skill 文件。空、loading、partial、error 与 reduced-motion 均有独立处理，Claude Code 转换入口在 adapter 未就绪前明确禁用。
 - 新增 6 项 taxonomy core fixture 与 1 项 HTTP fixture，覆盖九类、含混/通用/否定描述、无效包、65 项守恒、BOM/CRLF、确定性、内容不回显、零写入和 runtime capability；本地 Java 测试从 293 增至 300，Vue typecheck/build 和真实桌面/360px 浏览器导入→分类→人工整理流程通过，移动端页面宽度无溢出。Gate 7 的 Organize 纵向切片可用；系统 workspace 选择仍是下一发布入口缺口。
+
+## 2026-08-07：收敛为桌面 Skill 工作台布局
+
+- 顶部工作台切换、项目路径、加载动作和运行状态迁入固定左侧栏；技能库主区改为左侧正方形 3×3 taxonomy 与右侧待整理队列。待整理列表独立滚动，分类拖拽不再跨越上下两个大区域。
+- 删除 560px 手机端导航与单列重排规则，页面以 1080px 桌面宽度为最小设计基线，只保留 1220px 以下的窄桌面压缩和横向完整性回退。产品不再把 360px 适配作为完成条件。
+- 真实浏览器在 1440×900 下完成空状态、导入与分类检查；3×3 保持正方形，右侧两条未分类 Skill 可见，console 为 0 error / 0 warning。Vue typecheck/build 通过；本轮不修改 Java 分类或事务核心，本地测试总数仍为 300。
+- 近期开发改为桌面壳、系统文件夹选择与可下载 alpha。已存在的路径限制、Diff、批准、stale 检查和回退继续生效；更多推演性安全研究暂停，待真实故障或分发要求再恢复。
