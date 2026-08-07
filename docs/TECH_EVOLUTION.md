@@ -411,3 +411,10 @@
 - HTTP preview/apply 增加显式 `RAW_SKILL_MD` candidate mode，与 guided 字段互斥且只允许 UPDATE。原文 preview 强制携带加载时的 64 位 source SHA；服务端重新校验候选，并让同一个候选、preimage、Diff 和 approval token 进入既有单文件事务，rollback 继续恢复 byte-exact 原文。
 - 自定义 Skill 在页面中默认进入可编辑原文模式，显示字节预算与格式问题；切换 Skill 前提示未应用草稿，结构化改写与原文草稿分别保留。360px 下模式按钮、提示动作和编辑器不产生横向页面溢出。
 - 新增 8 项原文 validator fixture 与 2 项 HTTP 端到端 fixture，覆盖精确保留、名称绑定、简单/quoted 重复 key 绕过、非字符串/复杂 scalar、文本/预算边界、preview/apply/rollback、stale source、混合 candidate、HTTP 错误稳定性和 blocked/stale 优先级；本地 Java 测试从 283 增至 293，conformance 保持 27 项，Vue typecheck/build 通过。下一产品切片改为系统 workspace 选择。
+
+## 2026-08-07：加入九类 Skill Catalog 与人工整理队列
+
+- Java 新增 `dev-skill-taxonomy-v1`，在一次有界 inventory 上只使用 Skill 目录名和 frontmatter `description` 做规则分类。九类顺序固定；自动归类要求最低分与领先幅度，证据不足或类别并列进入 `UNCLASSIFIED`。报告明确 `contentIncluded=false`、`writesPerformed=false`、`llmUsed=false`，并以 source SHA 绑定结果。
+- loopback 新增 `POST /api/v1/skills/classifications`，只投影 category、confidence、score、margin 和 NAME/DESCRIPTION 证据来源，不回传正文或 description。分类读取复用 inventory 选择与 NOFOLLOW/containment/size/hash 检查，不读取 supporting files。
+- Vue 增加独立“技能库”入口：导入后显示 3×3 固定分类桶，分类时做轻量错峰投放动画；未分类项进入“待整理”，桌面可拖拽，触屏和键盘可用原生选择器。详情可进入原有编辑流程；人工分类只保存在当前会话并绑定逻辑路径与 source SHA，不改动 Skill 文件。空、loading、partial、error 与 reduced-motion 均有独立处理，Claude Code 转换入口在 adapter 未就绪前明确禁用。
+- 新增 6 项 taxonomy core fixture 与 1 项 HTTP fixture，覆盖九类、含混/通用/否定描述、无效包、65 项守恒、BOM/CRLF、确定性、内容不回显、零写入和 runtime capability；本地 Java 测试从 293 增至 300，Vue typecheck/build 和真实桌面/360px 浏览器导入→分类→人工整理流程通过，移动端页面宽度无溢出。Gate 7 的 Organize 纵向切片可用；系统 workspace 选择仍是下一发布入口缺口。

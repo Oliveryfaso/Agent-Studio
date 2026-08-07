@@ -35,6 +35,7 @@ public final class LocalWorkbenchHttpTests {
         run("built UI is same-origin with fragment token", this::staticUi);
         run("local API requires exact origin and bearer token", this::authBoundary);
         run("inventory lists previewable Skills without content", this::inventory);
+        run("classification is deterministic content-free and read-only", this::classifications);
         run("inventory distinguishes empty and partial results", this::inventoryStates);
         run("inventory rejects invalid requests with typed errors", this::inventoryErrors);
         run("selected Skill content is explicit and stale-bound", this::skillContent);
@@ -64,6 +65,7 @@ public final class LocalWorkbenchHttpTests {
             equal(200, response.statusCode(), "status");
             contains(response.body(), "\"status\": \"READY\"");
             contains(response.body(), "\"skillInventory\": true");
+            contains(response.body(), "\"skillClassification\": true");
             contains(response.body(), "\"skillCreate\": true");
             check(response.headers().firstValue("Access-Control-Allow-Origin").isEmpty(),
                     "CORS header present");
@@ -151,6 +153,35 @@ public final class LocalWorkbenchHttpTests {
             String matchingPreview = previewBody(fixture.workspace(), true)
                     .replace("}", ",\"expectedPreimageSha256\":" + json(hash) + "}");
             equal(200, fixture.post("preview", matchingPreview).statusCode(), "matching source");
+        });
+    }
+
+    private void classifications() throws Exception {
+        withFixture(fixture -> {
+            String marker = "PRIVATE_CLASSIFICATION_BODY_MARKER";
+            String source = "---\nname: review-api-change\n"
+                    + "description: Code review for API backward compatibility.\n---\n\n"
+                    + marker + "\n";
+            Files.writeString(fixture.target(), source, StandardCharsets.UTF_8);
+            HttpResponse<String> first = fixture.postClassifications(
+                    inventoryBody(fixture.workspace()));
+            HttpResponse<String> second = fixture.postClassifications(
+                    inventoryBody(fixture.workspace()));
+            equal(200, first.statusCode(), "classification status");
+            equal(withoutRequestId(first.body()), withoutRequestId(second.body()),
+                    "stable response");
+            contains(first.body(), "\"command\": \"skill-classifications\"");
+            contains(first.body(), "\"classifierProfileId\": \"dev-skill-taxonomy-v1\"");
+            contains(first.body(), "\"category\": \"CODE_QUALITY_REVIEW\"");
+            contains(first.body(), "\"confidence\": \"MEDIUM\"");
+            contains(first.body(), "\"contentIncluded\": false");
+            contains(first.body(), "\"writesPerformed\": false");
+            contains(first.body(), "\"llmUsed\": false");
+            check(!first.body().contains(marker), "classification exposed body");
+            check(!first.body().contains("Code review for"),
+                    "classification exposed description");
+            equal(source, Files.readString(fixture.target(), StandardCharsets.UTF_8),
+                    "classification changed Skill");
         });
     }
 
@@ -674,6 +705,11 @@ public final class LocalWorkbenchHttpTests {
                 + "validation: Confirm findings cite inputs.\npermission: NONE\nrisk: LOW\n";
     }
 
+    private static String withoutRequestId(String body) {
+        return body.replaceAll("\\\"requestId\\\": \\\"[^\\\"]+\\\"",
+                "\\\"requestId\\\": \\\"<request>\\\"");
+    }
+
     private void withFixture(ThrowingConsumer<Fixture> test) throws Exception {
         Path base = Files.createTempDirectory("acw-http-test-");
         try {
@@ -704,6 +740,9 @@ public final class LocalWorkbenchHttpTests {
         URI skillContentEndpoint() {
             return server.baseUri().resolve("api/v1/skills/content");
         }
+        URI classificationsEndpoint() {
+            return server.baseUri().resolve("api/v1/skills/classifications");
+        }
         HttpResponse<String> postInventory(String body) throws Exception {
             return postInventory(body, server.sessionToken(), origin());
         }
@@ -720,6 +759,16 @@ public final class LocalWorkbenchHttpTests {
         }
         HttpResponse<String> postSkillContent(String body) throws Exception {
             HttpRequest request = HttpRequest.newBuilder(skillContentEndpoint())
+                    .timeout(Duration.ofSeconds(5))
+                    .header("Content-Type", "application/json")
+                    .header("Origin", origin())
+                    .header("Authorization", "Bearer " + server.sessionToken())
+                    .POST(HttpRequest.BodyPublishers.ofString(body)).build();
+            return HttpClient.newHttpClient().send(request,
+                    HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        }
+        HttpResponse<String> postClassifications(String body) throws Exception {
+            HttpRequest request = HttpRequest.newBuilder(classificationsEndpoint())
                     .timeout(Duration.ofSeconds(5))
                     .header("Content-Type", "application/json")
                     .header("Origin", origin())

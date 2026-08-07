@@ -48,6 +48,7 @@ test_mains=(
   dev.agentconfig.workbench.CodexSkillInventoryTests
   dev.agentconfig.workbench.CodexSkillContentTests
   dev.agentconfig.workbench.RawCodexSkillCandidateTests
+  dev.agentconfig.workbench.SkillTaxonomyTests
   dev.agentconfig.workbench.SkillBlueprintPreviewCliTests
   dev.agentconfig.workbench.CodexSkillDraftCliTests
   dev.agentconfig.workbench.FixtureSkillTransactionTests

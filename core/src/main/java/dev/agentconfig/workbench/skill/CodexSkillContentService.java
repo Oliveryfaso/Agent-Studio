@@ -35,10 +35,18 @@ public final class CodexSkillContentService {
                         && skill.state() != PackageState.PARTIAL)
                 .toList();
         if (matches.size() != 1) throw new UnavailableException();
-        SkillPackage selected = matches.getFirst();
-        Path target = root.resolve(logicalPath).normalize();
-        if (!target.startsWith(root)) throw new IllegalArgumentException("logicalPath");
-        Path cursor = root;
+        return readSelected(root, matches.getFirst());
+    }
+
+    CodexSkillContent readSelected(Path realRoot, SkillPackage selected) throws IOException {
+        String logicalPath = selected.logicalPath();
+        if (!logicalPath.matches(
+                "\\.agents/skills/[a-z0-9]+(?:-[a-z0-9]+)*/SKILL\\.md")) {
+            throw new IllegalArgumentException("logicalPath");
+        }
+        Path target = realRoot.resolve(logicalPath).normalize();
+        if (!target.startsWith(realRoot)) throw new IllegalArgumentException("logicalPath");
+        Path cursor = realRoot;
         for (String part : logicalPath.split("/")) {
             cursor = cursor.resolve(part);
             if (Files.isSymbolicLink(cursor)) throw new UnavailableException();

@@ -361,6 +361,16 @@
 - 并发与回退：raw preview 强制提供内容读取返回的 source SHA；不匹配时在批准计划生成前返回 stale。preview 与 apply 重新构造同一候选，approval token 继续绑定 candidate/preimage/Diff；成功应用生成现有事务记录，rollback 恢复原始字节。切换目标前的草稿提示是防误操作 UX，不替代服务端绑定。
 - 原因：把任意自定义 Skill 投影到 Studio 模板会丢失未知字段和正文结构；直接绕过 validator 又会扩大事务可写面。独立最终字节候选既保留未知内容，也维持可测试的最小格式与目标约束。
 
+## ADR-042：Skill Catalog 采用九类固定 taxonomy 与保守人工回退
+
+- 日期：2026-08-07
+- 状态：接受（Codex-first 第一版）
+- 决定：技能库使用九个稳定类别：库和 API 参考、产品验证、数据查询分析、业务流程自动化、代码脚手架、代码质量与审查、CI/CD 与部署、Runbook 排障手册、基础设施运维。“待整理”是人工处理队列，不是第十类。`dev-skill-taxonomy-v1` 只读取已有 inventory 中单个 Skill 的目录名与 frontmatter `description`，使用维护的高精度短语、分数和领先幅度；证据不足或含混时返回 `UNCLASSIFIED`，不猜测。
+- 数据边界：HTTP 分类结果不含正文或 description，只含逻辑路径、source SHA、建议类别、置信度、分数和证据来源；不读取 supporting files、不执行 Skill、不调用 LLM、不写工作区。网页人工覆盖绑定 `logicalPath + sourceSha256`，第一版只在当前会话生效，不伪装成已经修改文件。
+- 交互：桌面端提供 3×3 固定桶与待整理拖拽；触屏、键盘和无拖拽环境使用原生选择器完成相同操作。分类投放和详情出现采用短动画，并尊重 `prefers-reduced-motion`。Claude Code 转换入口在 adapter 未达到对应 maturity 前保持禁用，不用假结果填充流程。
+- LLM 边界：未来只有在规则无法覆盖且用户主动允许时，才可把 name/description 发送给可选建议器；输出必须通过同一 taxonomy schema，且仍进入人工确认，不得直接修改 Skill 或训练 taxonomy。是否需要该能力由真实未分类率与人工校正数据决定。
+- 原因：固定分类提供可记忆的信息架构，规则优先让常见结果可解释、可测试、离线可用；人工队列比低阈值强行分类更适合管理工具。九类是当前产品 taxonomy，不宣称是 Anthropic 官方通用标准。
+
 ## 待决问题
 
 - [ ] 为正式工程选择 Java 构建工具与最小模块骨架；当前纯 JDK 脚本仅服务 Phase 1 spike。

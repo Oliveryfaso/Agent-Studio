@@ -4,7 +4,7 @@
 - 日期：2026-08-05
 - 项目类型：生产型 AI 应用闭环 + Agent 配置治理 + 评测与可观测性
 - 项目阶段：实验室原型 / existing-Skill 真实入口部分开放，本地 Vue 单页闭环可运行
-- 当前执行范围：`Inspect → Draft → Diff/Export → Simple Apply/Rollback`；其他宿主、通用转换、GitHub、Router 与历史演化暂时冻结
+- 当前执行范围：`Inspect → Organize → Draft → Diff/Export → Simple Apply/Rollback`；其他宿主、通用转换、GitHub、Router 与历史演化暂时冻结
 
 ## 1. 一句话目标
 
@@ -31,6 +31,7 @@ Codex-first
 |---|---|
 | Codex inspect | Active / 第一刀完成 |
 | Codex Skill inventory | Active / S0 完成 |
+| 九类 Skill Catalog | Active / 确定性分类与会话内人工校正完成 |
 | Codex Skill triage / Blueprint | Active / S1 完成 |
 | Codex Skill candidate、validation、diff/export | Active / S2 完成 |
 | 单文件目标审阅、Simple Apply/Rollback | Active / existing Codex Skill 真实 CLI 已接通 |

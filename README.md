@@ -4,14 +4,15 @@ GitHub: [Oliveryfaso/Agent-Studio](https://github.com/Oliveryfaso/Agent-Studio)
 
 Agent Config Workbench（智能体配置工作台）的长期目标，是在 Codex、Claude Code 和主流 vibe-coding 工具之间管理、生成、转换并安全应用 instructions、skills、rules 和 agents。当前实施刻意收敛为 Codex-first 的 `Inspect → Draft → Diff/Export → Simple Apply/Rollback` 单资产闭环；其他宿主、通用转换、GitHub、Router 和历史演化在核心用户价值验证前保持冻结。
 
-当前状态：**实验室原型，Codex-first 单资产闭环已有可操作的本地 Vue 页面**。Java 21 治理内核可在用户明确指定的普通项目中创建第一个 Codex project Skill，或更新一个已存在的 Skill；标准模板使用结构化表单，自定义 Skill 可直接编辑受验证的 `SKILL.md` 原文，随后执行 `preview → approve/apply → rollback`。同源 Vue 3 单页显示真实目标、完整 Diff、待创建目录、批准状态和事务回执。它仍不保证断电恢复、跨进程并发 CAS 或完整 Windows reparse 防护，因此 Gate 6 仍部分开放；Gate 7 已进入“核心单页流程可用”，还不是可分发桌面产品。
+当前状态：**实验室原型，Codex-first 单资产闭环已有可操作的本地 Vue 页面**。Java 21 治理内核可在用户明确指定的普通项目中创建第一个 Codex project Skill，或更新一个已存在的 Skill；标准模板使用结构化表单，自定义 Skill 可直接编辑受验证的 `SKILL.md` 原文，随后执行 `preview → approve/apply → rollback`。新增的“技能库”会把项目 Skill 按九类确定性整理，无法可靠判断的条目进入人工队列；分类和人工调整都不改文件。同源 Vue 3 页面显示技能分类、真实目标、完整 Diff、批准状态和事务回执。它仍不保证断电恢复、跨进程并发 CAS 或完整 Windows reparse 防护，因此 Gate 6 仍部分开放；Gate 7 已进入“核心单页流程可用”，还不是可分发桌面产品。
 
 ## 当前产品焦点
 
 1. Codex 项目 instruction/skill/agent/rule 的可读检查。
-2. 自然语言 persistence triage 与单个 Codex Skill 草案。
-3. 正文预览、静态检查、逐行 Diff 与复制/导出。
-4. 单文件、项目内、明确批准后的简单写入与原始字节回退。
+2. Codex project Skills 的九类整理、查看与人工校正。
+3. 自然语言 persistence triage 与单个 Codex Skill 草案。
+4. 正文预览、静态检查、逐行 Diff 与复制/导出。
+5. 单文件、项目内、明确批准后的简单写入与原始字节回退。
 
 Claude Code 与其他宿主仍保留在长期路线中；现有 conversion、Git probe 和 conformance 代码作为治理内核与实验合同保留，但当前不继续横向扩建。
 
@@ -57,13 +58,14 @@ Claude Code 与其他宿主仍保留在长期路线中；现有 conversion、Git
 - 其他 instruction 结构仍通常为 `ASSISTED/METADATA_ONLY`，policy、hook、plugin、permission、可执行行为等仍为 `UNSUPPORTED`；任何 `NOT_RUN`、`FAILED`、`UNKNOWN` 或 unsafe target 都不能伪装成 fully validated。
 - `inspect codex` 将 Context 与 Analyze 投影为中文摘要，默认不输出正文、hash、source ID 或 `realPath`，并固定说明零写入。
 - `skill-inventory codex` 只检查根级 `.agents/skills/<name>/SKILL.md`：读取有上限的 UTF-8 frontmatter 与正文内联引用，输出 schema v2 的逻辑路径、hash、大小、最小字段状态、supporting-file 数量、风险和安全引用图。`codex-skill-inline-reference-v1` 支持包内 `[link](relative)` / `![image](relative)`、angle path、query 与 fragment；不宣称 full CommonMark。只有 `RESOLVED` edge 暴露 target logical path；`MISSING/UNKNOWN` 只保留 source、line/column、类型与状态。supporting files 只枚举路径，不读取或执行内容，报告固定 `contentIncluded=false`、`writesPerformed=false`。
+- `POST /api/v1/skills/classifications` 使用版本化 `dev-skill-taxonomy-v1`，只根据目录名和 frontmatter `description` 中维护的高精度短语，将 Skill 建议到库/API、产品验证、数据分析、流程自动化、脚手架、质量审查、CI/CD、Runbook、基础运维九类。分数或领先幅度不足时返回 `UNCLASSIFIED`，不读取 supporting files、不回传正文/description、不调用 LLM，也不写入工作区。
 - `skill-blueprint-preview codex` 从 stdin 读取不超过 32 KiB 的严格 UTF-8 向导；Java 核心不接收 workspace 路径。便捷脚本只打开用户显式选择的单个普通非符号链接文件。自然语言只进入显式 goal/description 等 Blueprint 字段，分类只使用 recurrence/trigger/success/isolation/enforcement 等向导事实，不使用关键词猜测。输出固定 `workspaceContentIncluded=false`、`userProvidedContentIncluded=true`、`rawRequestIncluded=false`、`llmUsed=false`、`writesPerformed=false`、`applyEligible=false`；未确认、缺字段和高风险自动化退出 3 且不生成 Blueprint。
 - `skill-draft-preview codex` 复用同一向导输入，仅接受 `BLUEPRINT_READY` 的 Codex project Skill。`codex-project-skill-template-v1` 生成只有 `name` / `description` frontmatter 的单文件候选；触发与排除被写入 description，正文采用固定 progressive-disclosure 章节并转义用户 Markdown 结构。独立的 `codex-project-skill-static-v1` 对最终 UTF-8/LF 字节、description 安全约束、预算、路径、canonical content 和 hash 绑定做检查。默认 JSON 不含正文；只有 `READY` 候选可用 `--export content|diff|prompt` 显式输出。Diff 自带 `SYNTHETIC_NEW_FILE / NOT_CHECKED` 标记并以 `/dev/null` 为基线，不代表检查过磁盘目标；tools、额外权限、supporting-file proposal 或非 LOW risk 返回 `REVIEW_REQUIRED`，且 raw export 被阻断。
 - S3 fixture transaction 只接受 marker 内容精确匹配的临时 workspace，并要求独立 marker state root。manifest v3 同时支持 `PREPARED → COMMIT_INTENT → APPLIED` 与 `APPLIED → ROLLBACK_INTENT → ROLLED_BACK`；`recoverTransaction` 只在 source/result identity、hash、权限、快照、stage 与拓扑组合唯一时推进。`scanPendingTransactions` 只枚举 state root 直接子项，受 direct-entry/manifest 双预算与稳定 cursor 约束，只返回 transaction metadata，不读出候选内容、不写入也不自动恢复。receipt 分开记录本次目标写与状态写。fixture API 本身没有公开 CLI；真实过渡 CLI 使用更窄的 existing-only 合同，暂未继承自动恢复。不提供断电级 directory fsync、OS 级 CAS/防 TOCTOU 或 Windows junction 完整证明。
 - `skill-change-preview/apply/rollback` 是首个真实工作区入口，只处理一个 Codex project Skill。更新模式绑定真实 preimage 与 Diff；创建模式绑定目标不存在状态、操作类型和缺失父目录。两者都要求显式 approval token，并把事务状态放入 workspace 外的可信 state root。更新 rollback 恢复 byte-exact snapshot；创建 rollback 只在 identity/hash/权限未变化时删除本次文件，并只清理本事务创建且仍为空的目录。
-- Vue 3 + TypeScript 单页已覆盖 workspace + Skill inventory + `更新已有 / 新建 Skill` + 中文表单、受验证原文编辑、真实 Diff、明确批准、apply receipt 与 guarded rollback。选择已有 Skill 后，受限 content endpoint 会读取明确选中的 `SKILL.md`：template-v1 只回填可证明的字段，并要求用户补齐运行时文件未保存的 3+3 路由测试例；自定义结构进入原文模式，保留未知正文与结构，经过 `codex-raw-skill-static-v1` 的路径、UTF-8/LF、128 KiB 和最小 frontmatter 检查后整体替换。加载时的 source SHA 是原文 preview 的必填绑定，文件若在读取后发生变化即拒绝继续；切换目标前会提示未应用草稿。空项目直接进入创建模式；创建后列表自动刷新，撤销后恢复为空项目状态。`BLOCKED`、`NO_CHANGE`、`STALE`、`CURRENT_TARGET_CHANGED`、`RECOVERY_REQUIRED` 与网络错误分开呈现。启动 token 通过 URL fragment 交付，页面读取后立刻从地址栏删除并只保留在内存。
+- Vue 3 + TypeScript 页面分为“技能库”和“编辑与应用”。技能库在导入后显示稳定 3×3 分类桶、轻量投放动画、分类计数、待整理队列、拖拽/原生选择器两种人工归类方式和 Skill 详情；人工覆盖只绑定本次会话的逻辑路径与 source SHA。编辑区覆盖 `更新已有 / 新建 Skill`、中文表单、受验证原文编辑、真实 Diff、明确批准、apply receipt 与 guarded rollback。选择已有 Skill 后，受限 content endpoint 会读取明确选中的 `SKILL.md`：template-v1 只回填可证明的字段，并要求用户补齐运行时文件未保存的 3+3 路由测试例；自定义结构进入原文模式，保留未知正文与结构，经过 `codex-raw-skill-static-v1` 的路径、UTF-8/LF、128 KiB 和最小 frontmatter 检查后整体替换。加载时的 source SHA 是原文 preview 的必填绑定，文件若在读取后发生变化即拒绝继续；切换目标前会提示未应用草稿。空项目直接进入创建模式；创建后列表自动刷新，撤销后恢复为空项目状态。`BLOCKED`、`NO_CHANGE`、`STALE`、`CURRENT_TARGET_CHANGED`、`RECOVERY_REQUIRED` 与网络错误分开呈现。启动 token 通过 URL fragment 交付，页面读取后立刻从地址栏删除并只保留在内存。
 - Java 同源静态资源服务只允许构建产物中的 `index.html`、hash asset 与 favicon，带 CSP/no-store/nosniff 等响应头；仍只绑定 loopback，state root 仍由启动参数固定。
-- Ubuntu、macOS、Windows 三平台 CI 基线已真实通过并持续复验；当前本地 293 项 Java 测试用例全部通过，其中版本化 conformance 为 27 项。每次变更仍以对应远端 CI run 为合并依据。
+- Ubuntu、macOS、Windows 三平台 CI 基线已真实通过并持续复验；当前本地 300 项 Java 测试用例全部通过，其中版本化 conformance 为 27 项。每次变更仍以对应远端 CI run 为合并依据。
 
 需要 JDK 21；本地 UI 构建还需要 Node.js/npm。Java 核心仍不依赖 Gradle、Maven 或第三方库；Vue 3、Vite、TypeScript 与 vue-tsc 只存在于 `ui/`，用于浏览器交互和静态构建：
 
@@ -153,4 +155,4 @@ risk: LOW
 
 ## 下一里程碑
 
-创建、读取和更新一个 Codex project Skill 的首个 Vue 闭环已经开放，非模板 Skill 也能以受验证原文候选经过精确 Diff 后整体编辑。下一步优先实现系统 workspace 选择，再接可重启恢复入口和 `jpackage` 可下载 alpha。不同时扩建其他宿主、LLM、Router 或历史演化。发布级事务仍需 interrupted-process recovery、OS 级 CAS/dir-handle-relative 防 TOCTOU、断电级 directory fsync 与 Windows reparse/junction fixture，因此 Gate 6 仍只算部分开放。
+创建、读取、分类和更新 Codex project Skill 的首个 Vue 闭环已经开放，非模板 Skill 也能以受验证原文候选经过精确 Diff 后整体编辑。下一步优先实现系统 workspace 选择，再接可重启恢复入口和 `jpackage` 可下载 alpha；分类的持久化、可配置词表和可选 LLM 建议器留在真实用户反馈之后。不同时扩建其他宿主、Router 或历史演化。发布级事务仍需 interrupted-process recovery、OS 级 CAS/dir-handle-relative 防 TOCTOU、断电级 directory fsync 与 Windows reparse/junction fixture，因此 Gate 6 仍只算部分开放。

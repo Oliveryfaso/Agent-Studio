@@ -84,6 +84,8 @@ public final class LocalWorkbenchServer implements AutoCloseable {
                 workbench.post(workbench.api::inventory));
         server.createContext("/api/v1/skills/content",
                 workbench.post(workbench.api::content));
+        server.createContext("/api/v1/skills/classifications",
+                workbench.post(workbench.api::classifications));
         server.createContext("/api/v1/skill-changes/preview",
                 workbench.post(workbench.api::preview));
         server.createContext("/api/v1/skill-changes/apply",
@@ -184,7 +186,8 @@ public final class LocalWorkbenchServer implements AutoCloseable {
                 + "  \"productVersion\": \"0.1.0-lab\",\n"
                 + "  \"capabilities\": [{\"hostId\": \"codex\","
                 + " \"skillInventory\": true, \"skillContentRead\": true, \"skillCreate\": true,"
-                + " \"existingSkillReplace\": true, \"rawSkillEdit\": true}]\n}");
+                + " \"existingSkillReplace\": true, \"rawSkillEdit\": true,"
+                + " \"skillClassification\": true}]\n}");
     }
 
     private void staticOrNotFound(HttpExchange exchange) throws IOException {

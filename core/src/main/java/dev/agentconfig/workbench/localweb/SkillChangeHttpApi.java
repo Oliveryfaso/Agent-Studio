@@ -3,6 +3,8 @@ package dev.agentconfig.workbench.localweb;
 import dev.agentconfig.workbench.blueprint.BlueprintPreviewService;
 import dev.agentconfig.workbench.skill.CodexSkillInventory;
 import dev.agentconfig.workbench.skill.CodexSkillInventoryService;
+import dev.agentconfig.workbench.skill.SkillTaxonomyReport;
+import dev.agentconfig.workbench.skill.SkillTaxonomyService;
 import dev.agentconfig.workbench.skill.CodexSkillContent;
 import dev.agentconfig.workbench.skill.CodexSkillContentService;
 import dev.agentconfig.workbench.skilldraft.CodexSkillFormProjection;
@@ -128,6 +130,53 @@ final class SkillChangeHttpApi {
             return error(422, requestId, "CONTENT_TOO_LARGE", false);
         } catch (CodexSkillContentService.InvalidUtf8Exception exception) {
             return error(422, requestId, "CONTENT_NOT_UTF8", false);
+        } catch (IOException exception) {
+            return error(500, requestId, "CORE_IO_FAILED", true);
+        }
+    }
+
+    ApiResponse classifications(Map<String, Object> request, String requestId) {
+        try {
+            allowKeys(request, Set.of("hostId", "workspacePath"));
+            requireHost(request);
+            SkillTaxonomyReport report = new SkillTaxonomyService().classify(
+                    path(request, "workspacePath"));
+            StringBuilder result = begin(requestId, "skill-classifications")
+                    .append("  \"hostId\": \"codex\",\n")
+                    .append("  \"classifierProfileId\": ")
+                    .append(json(report.classifierProfileId())).append(",\n")
+                    .append("  \"status\": ").append(json(report.status().name())).append(",\n")
+                    .append("  \"contentIncluded\": false,\n")
+                    .append("  \"writesPerformed\": false,\n")
+                    .append("  \"llmUsed\": false,\n")
+                    .append("  \"categories\": [");
+            for (int index = 0; index < report.categories().size(); index++) {
+                if (index > 0) result.append(", ");
+                result.append(json(report.categories().get(index).name()));
+            }
+            result.append("],\n  \"skills\": [\n");
+            for (int index = 0; index < report.skills().size(); index++) {
+                SkillTaxonomyReport.Classification skill = report.skills().get(index);
+                result.append("    {\"name\": ").append(json(skill.name()))
+                        .append(", \"logicalPath\": ").append(json(skill.logicalPath()))
+                        .append(", \"sourceSha256\": ").append(json(skill.sourceSha256()))
+                        .append(", \"category\": ")
+                        .append(skill.category() == null ? "null" : json(skill.category().name()))
+                        .append(", \"confidence\": ").append(json(skill.confidence().name()))
+                        .append(", \"score\": ").append(skill.score())
+                        .append(", \"margin\": ").append(skill.margin())
+                        .append(", \"evidenceSources\": [");
+                for (int evidence = 0; evidence < skill.evidenceSources().size(); evidence++) {
+                    if (evidence > 0) result.append(", ");
+                    result.append(json(skill.evidenceSources().get(evidence).name()));
+                }
+                result.append("]}").append(index + 1 < report.skills().size() ? ",\n" : "\n");
+            }
+            result.append("  ],\n  \"unclassifiedCount\": ")
+                    .append(report.unclassifiedCount()).append("\n}");
+            return new ApiResponse(200, result.toString());
+        } catch (IllegalArgumentException exception) {
+            return error(400, requestId, "INPUT_INVALID", false);
         } catch (IOException exception) {
             return error(500, requestId, "CORE_IO_FAILED", true);
         }
