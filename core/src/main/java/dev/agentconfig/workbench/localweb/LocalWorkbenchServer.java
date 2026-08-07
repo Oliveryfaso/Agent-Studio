@@ -25,7 +25,7 @@ import java.util.concurrent.Executors;
 
 /** Loopback-only transport for the local workbench UI. */
 public final class LocalWorkbenchServer implements AutoCloseable {
-    private static final int MAX_BODY_BYTES = 48 * 1024;
+    private static final int MAX_BODY_BYTES = 320 * 1024;
     private final HttpServer server;
     private final ExecutorService executor;
     private final SkillChangeHttpApi api;
@@ -184,7 +184,7 @@ public final class LocalWorkbenchServer implements AutoCloseable {
                 + "  \"productVersion\": \"0.1.0-lab\",\n"
                 + "  \"capabilities\": [{\"hostId\": \"codex\","
                 + " \"skillInventory\": true, \"skillContentRead\": true, \"skillCreate\": true,"
-                + " \"existingSkillReplace\": true}]\n}");
+                + " \"existingSkillReplace\": true, \"rawSkillEdit\": true}]\n}");
     }
 
     private void staticOrNotFound(HttpExchange exchange) throws IOException {

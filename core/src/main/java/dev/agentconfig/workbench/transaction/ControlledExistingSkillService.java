@@ -1,7 +1,6 @@
 package dev.agentconfig.workbench.transaction;
 
 import dev.agentconfig.workbench.skilldraft.CodexSkillDraftPreview;
-import dev.agentconfig.workbench.skilldraft.CodexSkillDraftPreview.Candidate;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
@@ -56,8 +55,13 @@ public final class ControlledExistingSkillService {
 
     public PreparedControlledSkillChange prepare(Path authorizedWorkspace,
             CodexSkillDraftPreview draft, Mode mode) throws IOException {
+        return prepare(authorizedWorkspace, readyCandidate(draft), mode);
+    }
+
+    public PreparedControlledSkillChange prepare(Path authorizedWorkspace,
+            ControlledSkillCandidate candidate, Mode mode) throws IOException {
         if (mode == null) throw new NullPointerException("mode");
-        Candidate candidate = readyCandidate(draft);
+        if (candidate == null) throw new NullPointerException("candidate");
         Path root;
         String rootIdentity;
         try {
@@ -136,8 +140,16 @@ public final class ControlledExistingSkillService {
 
     public ControlledSkillApplyReceipt apply(Path authorizedWorkspace, Path stateDirectory,
             CodexSkillDraftPreview draft, Mode mode, String approvalToken) throws IOException {
+        return apply(authorizedWorkspace, stateDirectory, readyCandidate(draft), mode,
+                approvalToken);
+    }
+
+    public ControlledSkillApplyReceipt apply(Path authorizedWorkspace, Path stateDirectory,
+            ControlledSkillCandidate candidate, Mode mode, String approvalToken)
+            throws IOException {
         if (mode == null) throw new NullPointerException("mode");
-        PreparedControlledSkillChange prepared = prepare(authorizedWorkspace, draft, mode);
+        if (candidate == null) throw new NullPointerException("candidate");
+        PreparedControlledSkillChange prepared = prepare(authorizedWorkspace, candidate, mode);
         ControlledSkillChangePlan plan = prepared.plan();
         if (!plan.applyEligible() || approvalToken == null
                 || !approvalToken.equals(plan.approvalToken().orElse(""))) {
@@ -154,7 +166,6 @@ public final class ControlledExistingSkillService {
             return applyReceipt(ControlledSkillApplyReceipt.Status.BLOCKED,
                     Optional.empty(), plan, false, false, false, false, blocked.code);
         }
-        Candidate candidate = readyCandidate(draft);
         Path target;
         TargetView current;
         try {
@@ -423,7 +434,8 @@ public final class ControlledExistingSkillService {
         }
     }
 
-    private static PreparedControlledSkillChange blocked(String rootIdentity, Candidate candidate,
+    private static PreparedControlledSkillChange blocked(
+            String rootIdentity, ControlledSkillCandidate candidate,
             String reason) {
         ControlledSkillChangePlan plan = new ControlledSkillChangePlan(1,
                 "csp_" + hash(tuple("controlled-blocked:v1", rootIdentity,
@@ -664,7 +676,7 @@ public final class ControlledExistingSkillService {
         }
     }
 
-    private static String exactDiff(Candidate candidate, TargetView target) {
+    private static String exactDiff(ControlledSkillCandidate candidate, TargetView target) {
         String oldText;
         try {
             oldText = strictUtf8(target.bytes());
@@ -686,7 +698,7 @@ public final class ControlledExistingSkillService {
         return diff.toString();
     }
 
-    private static String exactCreateDiff(Candidate candidate) {
+    private static String exactCreateDiff(ControlledSkillCandidate candidate) {
         List<String> newLines = lines(candidate.content());
         StringBuilder diff = new StringBuilder()
                 .append("# diffMode=REAL_TARGET_EXACT_CREATION targetState=ABSENT applyEligible=true\n")
@@ -723,14 +735,16 @@ public final class ControlledExistingSkillService {
                 .decode(ByteBuffer.wrap(bytes)).toString();
     }
 
-    private static Candidate readyCandidate(CodexSkillDraftPreview draft) {
+    private static ControlledSkillCandidate readyCandidate(CodexSkillDraftPreview draft) {
         if (draft == null || draft.status() != CodexSkillDraftPreview.Status.READY
                 || draft.validation().status()
                         != CodexSkillDraftPreview.ValidationStatus.PASSED
                 || draft.candidate().isEmpty()) {
             throw new IllegalArgumentException("controlled apply requires a READY Skill draft");
         }
-        return draft.candidate().orElseThrow();
+        var candidate = draft.candidate().orElseThrow();
+        return new ControlledSkillCandidate(candidate.logicalPath(), candidate.bytes(),
+                candidate.sha256(), candidate.rendererProfileId());
     }
 
     private static String rootIdentity(Path root) throws IOException {

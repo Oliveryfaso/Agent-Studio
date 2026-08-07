@@ -404,3 +404,10 @@
 - 新增 `codex-project-skill-template-v1` 读取投影。只有固定 frontmatter、章节顺序、连续 workflow 编号、canonical Markdown 转义和重新渲染字节完全一致时才回填；由于运行时模板刻意不保存 should-trigger/should-not-trigger 评测例，状态明确为 `PARTIAL_FORM`，不生成假例子。自定义结构为 `ADVANCED_ONLY`，页面只读展示完整原文。
 - UI 为内容读取增加独立 loading/error/stale 状态和迟到响应隔离。成功读取的 source SHA 会传给 update preview；若文件在读取后被外部修改，服务返回 `LOADED_CONTENT_STALE`，不会产生可批准计划。
 - 新增 4 项 core content fixture 与 1 项 HTTP 端到端 fixture；本地 Java 测试从 278 增至 283，conformance 保持 27 项，Vue typecheck/build 通过。真实浏览器验证自定义 Skill 原文降级、零 console error 与 360px `scrollWidth == clientWidth`。下一刀是独立、受验证的 raw `SKILL.md` candidate/preview/apply 路径，不能把原文伪装成现有 guided request。
+
+## 2026-08-07：开放自定义 Skill 原文编辑闭环
+
+- 新增 `ControlledSkillCandidate` 事务边界与独立 `codex-raw-skill-static-v1` validator。原文候选只接受固定项目路径、与目录一致且不超过 63 字符的名称、UTF-8/LF、末尾换行、128 KiB 预算，以及简单且有界的 `name` / `description` frontmatter；复杂 YAML scalar 保守拒绝，正文保持惰性且不被解释或执行。
+- HTTP preview/apply 增加显式 `RAW_SKILL_MD` candidate mode，与 guided 字段互斥且只允许 UPDATE。原文 preview 强制携带加载时的 64 位 source SHA；服务端重新校验候选，并让同一个候选、preimage、Diff 和 approval token 进入既有单文件事务，rollback 继续恢复 byte-exact 原文。
+- 自定义 Skill 在页面中默认进入可编辑原文模式，显示字节预算与格式问题；切换 Skill 前提示未应用草稿，结构化改写与原文草稿分别保留。360px 下模式按钮、提示动作和编辑器不产生横向页面溢出。
+- 新增 8 项原文 validator fixture 与 2 项 HTTP 端到端 fixture，覆盖精确保留、名称绑定、简单/quoted 重复 key 绕过、非字符串/复杂 scalar、文本/预算边界、preview/apply/rollback、stale source、混合 candidate、HTTP 错误稳定性和 blocked/stale 优先级；本地 Java 测试从 283 增至 293，conformance 保持 27 项，Vue typecheck/build 通过。下一产品切片改为系统 workspace 选择。

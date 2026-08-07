@@ -128,6 +128,8 @@ button { -webkit-tap-highlight-color: transparent; }
 .inventory-note { display: block; padding-top: 1px; }
 .no-selectable { color: #765525 !important; }
 .inline-error { color: var(--red) !important; }
+.discard-prompt { display: grid; gap: 6px; padding: 9px; color: #765525; background: #fff8e8; border: 1px solid #e2c987; border-radius: 5px; font-size: 10px; line-height: 1.5; }
+.discard-prompt > div { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .request-editor { display: grid; gap: 12px; min-width: 0; }
 .request-editor[inert] { opacity: .68; }
 .source-notice { display: grid; gap: 4px; font-size: 11px; line-height: 1.55; }
@@ -162,6 +164,8 @@ textarea.list-textarea { min-height: 84px; font-family: inherit; }
 .form-check strong { font-size: 10px; }
 .form-check ul { margin: 6px 0 0; padding-left: 17px; }
 .advanced-editor textarea { min-height: 270px; }
+.raw-editor textarea { tab-size: 2; white-space: pre; overflow: auto; }
+.raw-editor small { min-width: 0; overflow-wrap: anywhere; }
 input[type="text"], textarea {
   width: 100%;
   border: 1px solid #c9cec9;
@@ -315,6 +319,8 @@ footer { display: flex; justify-content: space-between; gap: 18px; padding: 18px
   .compact-button { width: 100%; }
   .mode-switch { width: 100%; }
   .mode-switch button { flex: 1; }
+  .discard-prompt > div { display: grid; }
+  .discard-prompt button { width: 100%; }
   .form-tools { align-items: flex-start; }
   .paired-fields { grid-template-columns: 1fr; }
   .section-heading { margin-bottom: 18px; }

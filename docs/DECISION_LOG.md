@@ -352,6 +352,15 @@
 - 产品取舍：创建和更新复用同一 Blueprint、renderer、Diff、批准、receipt 与 rollback 页面，不增加第二套向导。该能力仍只覆盖一个 Codex project `SKILL.md`；supporting files、多文件、Claude、LLM 与桌面打包不进入本切片。
 - 剩余边界：真实 manifest v2 仍没有接入 fixture v3 的完整 pending recovery 状态机，也不提供 OS conditional create/delete、directory fsync 或完整 Windows reparse 证明。因此它提升核心可用性，但不关闭 Gate 6。
 
+## ADR-041：自定义 Skill 采用受验证原文候选，不经模板往返
+
+- 日期：2026-08-07
+- 状态：接受（Codex-first 过渡切片）
+- 决定：非 template-v1 的现有 Codex Skill 使用独立 `RAW_SKILL_MD` candidate mode。页面保留并编辑读取到的完整文本；preview/apply 都重新运行 `codex-raw-skill-static-v1`，随后把最终字节交给与 guided draft 相同的单文件事务边界。raw 与 guided 字段互斥，raw 只允许 UPDATE，不提供原文创建。
+- 验证边界：候选必须是 `.agents/skills/<name>/SKILL.md`、名称与目录一致、UTF-8/LF、有末尾换行、最多 128 KiB，并包含简单有界的 `name` 和 `description` frontmatter。validator 不尝试实现完整 YAML，不展开 alias/tag/block scalar，不解析或执行正文；无法静态确认的 frontmatter 保守拒绝。
+- 并发与回退：raw preview 强制提供内容读取返回的 source SHA；不匹配时在批准计划生成前返回 stale。preview 与 apply 重新构造同一候选，approval token 继续绑定 candidate/preimage/Diff；成功应用生成现有事务记录，rollback 恢复原始字节。切换目标前的草稿提示是防误操作 UX，不替代服务端绑定。
+- 原因：把任意自定义 Skill 投影到 Studio 模板会丢失未知字段和正文结构；直接绕过 validator 又会扩大事务可写面。独立最终字节候选既保留未知内容，也维持可测试的最小格式与目标约束。
+
 ## 待决问题
 
 - [ ] 为正式工程选择 Java 构建工具与最小模块骨架；当前纯 JDK 脚本仅服务 Phase 1 spike。

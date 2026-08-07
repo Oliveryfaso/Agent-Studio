@@ -13,6 +13,8 @@ import dev.agentconfig.workbench.transaction.ControlledExistingSkillService.Mode
 import dev.agentconfig.workbench.transaction.ControlledSkillApplyReceipt;
 import dev.agentconfig.workbench.transaction.ControlledSkillChangePlan;
 import dev.agentconfig.workbench.transaction.ControlledSkillRollbackReceipt;
+import dev.agentconfig.workbench.transaction.ControlledSkillCandidate;
+import dev.agentconfig.workbench.transaction.RawCodexSkillCandidateService;
 import dev.agentconfig.workbench.transaction.PreparedControlledSkillChange;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -134,18 +136,30 @@ final class SkillChangeHttpApi {
     ApiResponse preview(Map<String, Object> request, String requestId) {
         try {
             allowKeys(request, Set.of("hostId", "workspacePath", "guidedRequest", "includeDiff",
-                    "operation", "expectedPreimageSha256"));
+                    "operation", "expectedPreimageSha256", "candidateMode", "logicalPath",
+                    "rawContent"));
             requireHost(request);
             Path workspace = path(request, "workspacePath");
-            String guidedRequest = text(request, "guidedRequest", 32 * 1024);
             boolean includeDiff = bool(request, "includeDiff", false);
             Mode mode = mode(request);
-            PreparedControlledSkillChange prepared = new ControlledExistingSkillService()
-                    .prepare(workspace, draft(guidedRequest), mode);
+            CandidateMode candidateMode = candidateMode(request);
+            if (candidateMode == CandidateMode.RAW_SKILL_MD && mode != Mode.UPDATE_EXISTING) {
+                throw new IllegalArgumentException("raw create");
+            }
+            ControlledExistingSkillService service = new ControlledExistingSkillService();
+            PreparedControlledSkillChange prepared = candidateMode == CandidateMode.RAW_SKILL_MD
+                    ? service.prepare(workspace, rawCandidate(request), mode)
+                    : service.prepare(workspace, draft(guidedRequest(request)), mode);
             ControlledSkillChangePlan plan = prepared.plan();
             Optional<String> expectedPreimage = optionalText(
                     request, "expectedPreimageSha256", 64);
+            if (candidateMode == CandidateMode.RAW_SKILL_MD
+                    && (expectedPreimage.isEmpty()
+                    || !expectedPreimage.orElseThrow().matches("[0-9a-f]{64}"))) {
+                throw new IllegalArgumentException("expectedPreimageSha256");
+            }
             if (mode == Mode.UPDATE_EXISTING && expectedPreimage.isPresent()
+                    && plan.preimageSha256().isPresent()
                     && !plan.preimageSha256().equals(expectedPreimage)) {
                 return error(409, requestId, "LOADED_CONTENT_STALE", true);
             }
@@ -161,6 +175,11 @@ final class SkillChangeHttpApi {
                     ? prepared.exactReplacementDiff().orElseThrow() : null;
             StringBuilder json = begin(requestId, "skill-change-preview")
                     .append("  \"hostId\": \"codex\",\n")
+                    .append("  \"candidateMode\": ").append(json(candidateMode.name())).append(",\n")
+                    .append("  \"validationProfileId\": ")
+                    .append(json(candidateMode == CandidateMode.RAW_SKILL_MD
+                            ? RawCodexSkillCandidateService.VALIDATION_PROFILE
+                            : "codex-project-skill-static-v1")).append(",\n")
                     .append("  \"operation\": ").append(json(operation(mode))).append(",\n")
                     .append("  \"authorizedRoot\": ").append(nullable(canonicalRoot)).append(",\n")
                     .append("  \"targetPath\": ").append(nullable(target)).append(",\n")
@@ -187,6 +206,8 @@ final class SkillChangeHttpApi {
                     .append("  \"diffIncluded\": ").append(diff != null).append(",\n")
                     .append("  \"exactReplacementDiff\": ").append(nullable(diff)).append("\n}");
             return new ApiResponse(status, json.toString());
+        } catch (RawCodexSkillCandidateService.ValidationException exception) {
+            return error(422, requestId, exception.code(), false);
         } catch (IllegalArgumentException exception) {
             return error(400, requestId, "INPUT_INVALID", false);
         } catch (IOException exception) {
@@ -197,14 +218,21 @@ final class SkillChangeHttpApi {
     ApiResponse apply(Map<String, Object> request, String requestId) {
         try {
             allowKeys(request, Set.of("hostId", "workspacePath", "guidedRequest",
-                    "approvalToken", "operation"));
+                    "approvalToken", "operation", "candidateMode", "logicalPath",
+                    "rawContent"));
             requireHost(request);
             Path workspace = path(request, "workspacePath");
-            String guidedRequest = text(request, "guidedRequest", 32 * 1024);
             String approvalToken = text(request, "approvalToken", 128);
             Mode mode = mode(request);
-            ControlledSkillApplyReceipt receipt = new ControlledExistingSkillService().apply(
-                    workspace, stateRoot, draft(guidedRequest), mode, approvalToken);
+            CandidateMode candidateMode = candidateMode(request);
+            if (candidateMode == CandidateMode.RAW_SKILL_MD && mode != Mode.UPDATE_EXISTING) {
+                throw new IllegalArgumentException("raw create");
+            }
+            ControlledExistingSkillService service = new ControlledExistingSkillService();
+            ControlledSkillApplyReceipt receipt = candidateMode == CandidateMode.RAW_SKILL_MD
+                    ? service.apply(workspace, stateRoot, rawCandidate(request), mode, approvalToken)
+                    : service.apply(workspace, stateRoot, draft(guidedRequest(request)), mode,
+                            approvalToken);
             int status = switch (receipt.status()) {
                 case VERIFIED_APPLIED -> 200;
                 case APPROVAL_MISMATCH, STALE_PREIMAGE -> 409;
@@ -213,6 +241,7 @@ final class SkillChangeHttpApi {
                 case RECOVERY_REQUIRED -> 503;
             };
             String json = begin(requestId, "skill-change-apply")
+                    .append("  \"candidateMode\": ").append(json(candidateMode.name())).append(",\n")
                     .append("  \"operation\": ").append(json(operation(mode))).append(",\n")
                     .append("  \"status\": ").append(json(receipt.status().name())).append(",\n")
                     .append("  \"transactionId\": ").append(optional(receipt.transactionId())).append(",\n")
@@ -224,6 +253,8 @@ final class SkillChangeHttpApi {
                     .append("  \"recoveryRequired\": ").append(receipt.recoveryRequired()).append(",\n")
                     .append("  \"detail\": ").append(json(receipt.detail())).append("\n}").toString();
             return new ApiResponse(status, json);
+        } catch (RawCodexSkillCandidateService.ValidationException exception) {
+            return error(422, requestId, exception.code(), false);
         } catch (IllegalArgumentException exception) {
             return error(400, requestId, "INPUT_INVALID", false);
         } catch (IOException exception) {
@@ -266,6 +297,34 @@ final class SkillChangeHttpApi {
                 new ByteArrayInputStream(guidedRequest.getBytes(StandardCharsets.UTF_8))));
     }
 
+    private static String guidedRequest(Map<String, Object> request) {
+        if (request.containsKey("rawContent") || request.containsKey("logicalPath")) {
+            throw new IllegalArgumentException("guided fields");
+        }
+        return text(request, "guidedRequest", 32 * 1024);
+    }
+
+    private static ControlledSkillCandidate rawCandidate(Map<String, Object> request) {
+        if (request.containsKey("guidedRequest")) throw new IllegalArgumentException("raw fields");
+        return new RawCodexSkillCandidateService().validate(
+                text(request, "logicalPath", 256), rawText(request, "rawContent"));
+    }
+
+    private static String rawText(Map<String, Object> request, String field) {
+        Object value = request.get(field);
+        if (!(value instanceof String text) || text.length() > 256 * 1024) {
+            throw new IllegalArgumentException(field);
+        }
+        return text;
+    }
+
+    private static CandidateMode candidateMode(Map<String, Object> request) {
+        Object value = request.get("candidateMode");
+        if (value == null || "GUIDED_TEMPLATE".equals(value)) return CandidateMode.GUIDED_TEMPLATE;
+        if ("RAW_SKILL_MD".equals(value)) return CandidateMode.RAW_SKILL_MD;
+        throw new IllegalArgumentException("candidateMode");
+    }
+
     private static void requireHost(Map<String, Object> request) {
         if (!"codex".equals(text(request, "hostId", 32))) {
             throw new IllegalArgumentException("hostId");
@@ -282,6 +341,8 @@ final class SkillChangeHttpApi {
     private static String operation(Mode mode) {
         return mode == Mode.CREATE_NEW ? "CREATE" : "UPDATE";
     }
+
+    private enum CandidateMode { GUIDED_TEMPLATE, RAW_SKILL_MD }
 
     private static void allowKeys(Map<String, Object> request, Set<String> allowed) {
         if (!allowed.containsAll(request.keySet())) throw new IllegalArgumentException("field");

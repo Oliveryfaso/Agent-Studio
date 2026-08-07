@@ -38,6 +38,8 @@ public final class LocalWorkbenchHttpTests {
         run("inventory distinguishes empty and partial results", this::inventoryStates);
         run("inventory rejects invalid requests with typed errors", this::inventoryErrors);
         run("selected Skill content is explicit and stale-bound", this::skillContent);
+        run("custom Skill raw edit applies and rolls back exactly", this::rawEndToEnd);
+        run("raw edit rejects stale and mixed candidates", this::rawGuards);
         run("preview apply rollback is byte identical", this::endToEnd);
         run("empty project can create and undo its first Skill", this::createFirstSkill);
         run("create approval rejects target and parent topology changes", this::createGuards);
@@ -277,6 +279,74 @@ public final class LocalWorkbenchHttpTests {
         });
     }
 
+    private void rawEndToEnd() throws Exception {
+        withFixture(fixture -> {
+            String original = "---\nname: review-api-change\ndescription: Custom review\n---\n\n# Notes\n";
+            String edited = original.replace("# Notes", "# Updated notes\n\nKeep this custom shape.");
+            Files.writeString(fixture.target(), original, StandardCharsets.UTF_8);
+            String preimage = hash(original);
+            HttpResponse<String> preview = fixture.post("preview", rawPreviewBody(
+                    fixture.workspace(), edited, preimage));
+            equal(200, preview.statusCode(), "raw preview");
+            contains(preview.body(), "\"candidateMode\": \"RAW_SKILL_MD\"");
+            contains(preview.body(), "\"validationProfileId\": \"codex-raw-skill-static-v1\"");
+            contains(preview.body(), "+# Updated notes\\n");
+            String token = capture(preview.body(),
+                    "\\\"approvalToken\\\": \\\"(acw_apply1_[0-9a-f]{64})\\\"");
+
+            HttpResponse<String> apply = fixture.post("apply", rawApplyBody(
+                    fixture.workspace(), edited, token));
+            equal(200, apply.statusCode(), "raw apply");
+            contains(apply.body(), "\"status\": \"VERIFIED_APPLIED\"");
+            equal(edited, Files.readString(fixture.target()), "raw bytes");
+            String transaction = capture(apply.body(),
+                    "\\\"transactionId\\\": \\\"([0-9a-f-]{36})\\\"");
+
+            HttpResponse<String> rollback = fixture.post("rollback",
+                    rollbackBody(fixture.workspace(), transaction));
+            equal(200, rollback.statusCode(), "raw rollback");
+            equal(original, Files.readString(fixture.target()), "raw rollback bytes");
+        });
+    }
+
+    private void rawGuards() throws Exception {
+        withFixture(fixture -> {
+            String raw = "---\nname: review-api-change\ndescription: Custom\n---\n\n# Body\n";
+            Files.writeString(fixture.target(), raw, StandardCharsets.UTF_8);
+            HttpResponse<String> missingHash = fixture.post("preview", rawPreviewBody(
+                    fixture.workspace(), raw + "More\n", null));
+            equal(400, missingHash.statusCode(), "missing raw preimage");
+            HttpResponse<String> empty = fixture.post("preview", rawPreviewBody(
+                    fixture.workspace(), "", hash(raw)));
+            equal(422, empty.statusCode(), "empty raw content");
+            contains(empty.body(), "RAW_CONTENT_REQUIRED");
+            HttpResponse<String> tooLarge = fixture.post("preview", rawPreviewBody(
+                    fixture.workspace(), "x".repeat(128 * 1024 + 1), hash(raw)));
+            equal(422, tooLarge.statusCode(), "large raw content");
+            contains(tooLarge.body(), "RAW_CONTENT_TOO_LARGE");
+            HttpResponse<String> stale = fixture.post("preview", rawPreviewBody(
+                    fixture.workspace(), raw + "More\n", "0".repeat(64)));
+            equal(409, stale.statusCode(), "stale raw preimage");
+            contains(stale.body(), "LOADED_CONTENT_STALE");
+            String mixed = rawPreviewBody(fixture.workspace(), raw, hash(raw));
+            mixed = mixed.substring(0, mixed.length() - 1)
+                    + ",\"guidedRequest\":" + json(request()) + "}";
+            equal(400, fixture.post("preview", mixed).statusCode(), "mixed candidate");
+            String mismatched = raw.replace("name: review-api-change", "name: other-skill");
+            HttpResponse<String> invalid = fixture.post("preview", rawPreviewBody(
+                    fixture.workspace(), mismatched, hash(raw)));
+            equal(422, invalid.statusCode(), "frontmatter mismatch");
+            contains(invalid.body(), "RAW_FRONTMATTER_NAME_MISMATCH");
+
+            String crlf = raw.replace("\n", "\r\n");
+            Files.writeString(fixture.target(), crlf, StandardCharsets.UTF_8);
+            HttpResponse<String> blocked = fixture.post("preview", rawPreviewBody(
+                    fixture.workspace(), raw, hash(crlf)));
+            equal(422, blocked.statusCode(), "blocked target precedence");
+            contains(blocked.body(), "TARGET_MUST_BE_UTF8_LF_WITH_FINAL_NEWLINE");
+        });
+    }
+
     private void staleApproval() throws Exception {
         withFixture(fixture -> {
             HttpResponse<String> preview = fixture.post("preview",
@@ -495,7 +565,7 @@ public final class LocalWorkbenchHttpTests {
     private void bodyBudget() throws Exception {
         withFixture(fixture -> {
             String body = "{\"hostId\":\"codex\",\"workspacePath\":\""
-                    + "x".repeat(50 * 1024) + "\"}";
+                    + "x".repeat(321 * 1024) + "\"}";
             HttpResponse<String> response = fixture.post("preview", body);
             equal(413, response.statusCode(), "status");
             contains(response.body(), "BODY_TOO_LARGE");
@@ -567,6 +637,22 @@ public final class LocalWorkbenchHttpTests {
         return "{\"hostId\":\"codex\",\"workspacePath\":" + json(workspace.toString())
                 + ",\"guidedRequest\":" + json(request()) + ",\"approvalToken\":"
                 + json(token) + ",\"operation\":" + json(operation) + "}";
+    }
+
+    private static String rawPreviewBody(Path workspace, String raw, String preimage) {
+        return "{\"hostId\":\"codex\",\"workspacePath\":" + json(workspace.toString())
+                + ",\"candidateMode\":\"RAW_SKILL_MD\",\"logicalPath\":"
+                + json(".agents/skills/review-api-change/SKILL.md")
+                + ",\"rawContent\":" + json(raw) + ",\"includeDiff\":true"
+                + (preimage == null ? "" : ",\"expectedPreimageSha256\":" + json(preimage))
+                + "}";
+    }
+
+    private static String rawApplyBody(Path workspace, String raw, String token) {
+        return "{\"hostId\":\"codex\",\"workspacePath\":" + json(workspace.toString())
+                + ",\"candidateMode\":\"RAW_SKILL_MD\",\"logicalPath\":"
+                + json(".agents/skills/review-api-change/SKILL.md")
+                + ",\"rawContent\":" + json(raw) + ",\"approvalToken\":" + json(token) + "}";
     }
 
     private static String rollbackBody(Path workspace, String transaction) {
